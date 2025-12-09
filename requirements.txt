@@ -2,6 +2,6 @@ streamlit>=1.30
 requests
 pandas
 sqlalchemy
-alembic     # optional for migrations
+alembic
 altair
 python-dotenv
