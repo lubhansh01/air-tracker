@@ -1,12 +1,24 @@
 import os
-from pathlib import Path
+from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = os.environ.get("DB_PATH", str(BASE_DIR / "data" / "airtracker.db"))
+load_dotenv()
 
-AERODATABOX_API_HOST = "aerodatabox.p.rapidapi.com"
-AERODATABOX_API_KEY = os.environ.get("AERODATABOX_API_KEY")  # set in env or in Streamlit secrets
+# API Configuration
+API_KEY = os.getenv('AERODATABOX_API_KEY')
+API_HOST = os.getenv('AERODATABOX_API_HOST')
 HEADERS = {
-    "x-rapidapi-key": AERODATABOX_API_KEY,
-    "x-rapidapi-host": AERODATABOX_API_HOST
+    'x-rapidapi-key': API_KEY,
+    'x-rapidapi-host': API_HOST
 }
+
+# Database Configuration
+DB_CONFIG = {
+    'host': os.getenv('DB_HOST', 'localhost'),
+    'database': os.getenv('DB_NAME', 'flight_analytics'),
+    'user': os.getenv('DB_USER', 'root'),
+    'password': os.getenv('DB_PASSWORD', ''),
+    'port': os.getenv('DB_PORT', 3306)
+}
+
+# Sample Airports (10 airports from different regions)
+AIRPORT_CODES = ['DEL', 'BOM', 'MAA', 'BLR', 'HYD', 'JFK', 'LHR', 'DXB', 'SIN', 'CDG']

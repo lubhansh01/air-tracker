@@ -1,7 +1,7 @@
-streamlit>=1.30
-requests
-pandas
-sqlalchemy
-alembic
-altair
-python-dotenv
+streamlit==1.28.0
+pandas==2.1.0
+plotly==5.17.0
+requests==2.31.0
+sqlalchemy==2.0.23
+mysql-connector-python==8.1.0
+python-dotenv==1.0.0
