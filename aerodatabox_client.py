@@ -1,5 +1,5 @@
 """
-AeroDataBox API Client
+AeroDataBox API Client - Fixed version
 """
 
 import requests
@@ -10,13 +10,10 @@ from typing import Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
-from config import (
-    HEADERS, build_url, get_code_type, 
-    FETCH_STRATEGY, AIRPORT_CODES
-)
+from config import HEADERS, build_url, get_code_type, AIRPORT_CODES
 
 class AeroDataBoxClient:
-    """Client for AeroDataBox API with intelligent caching"""
+    """Client for AeroDataBox API with error handling"""
     
     def __init__(self):
         self.session = requests.Session()
@@ -45,10 +42,10 @@ class AeroDataBoxClient:
                 time.sleep(sleep_time)
         
         self.request_log.append(current_time)
-        time.sleep(FETCH_STRATEGY['rate_limit_delay'])
+        time.sleep(0.3)  # Small delay between requests
     
     def _make_request(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
-        """Make API request with caching"""
+        """Make API request with caching and error handling"""
         cache_key = hashlib.md5(
             f"{endpoint}:{json.dumps(params) if params else ''}".encode()
         ).hexdigest()
@@ -56,49 +53,61 @@ class AeroDataBoxClient:
         # Check cache
         if cache_key in self.cache:
             cached_time, data = self.cache[cache_key]
-            if time.time() - cached_time < FETCH_STRATEGY['cache_ttl']:
+            if time.time() - cached_time < 300:  # 5 minutes cache
                 self.stats['cache_hits'] += 1
                 return data
         
         self._rate_limit()
         
-        for attempt in range(FETCH_STRATEGY['max_retries']):
-            try:
-                response = self.session.get(
-                    endpoint,
-                    params=params,
-                    timeout=FETCH_STRATEGY['timeout']
-                )
-                response.raise_for_status()
+        try:
+            print(f"🌐 Requesting: {endpoint.split('/')[-1]}")
+            response = self.session.get(
+                endpoint,
+                params=params,
+                timeout=15
+            )
+            
+            # Check for HTTP errors
+            if response.status_code != 200:
+                print(f"⚠️ HTTP {response.status_code} for {endpoint}")
                 
-                data = response.json()
-                
-                # Cache successful response
-                self.cache[cache_key] = (time.time(), data)
-                self.stats['total_requests'] += 1
-                self.stats['successful'] += 1
-                
-                return data
-                
-            except requests.exceptions.HTTPError as e:
-                if response.status_code == 429:  # Rate limit
-                    sleep_time = 2 ** attempt
-                    time.sleep(sleep_time)
-                    continue
-                elif response.status_code == 404:
+                # Don't cache error responses
+                if response.status_code == 500:
+                    # Server error - skip this endpoint
+                    return None
+                elif response.status_code == 429:
+                    # Rate limited
+                    time.sleep(5)
                     return None
                 else:
-                    print(f"HTTP error: {e}")
-                    
-            except requests.exceptions.RequestException as e:
-                print(f"Request error: {e}")
-                if attempt < FETCH_STRATEGY['max_retries'] - 1:
-                    time.sleep(1)
-                    continue
-        
-        self.stats['total_requests'] += 1
-        self.stats['failed'] += 1
-        return None
+                    response.raise_for_status()
+            
+            data = response.json()
+            
+            # Cache successful response
+            self.cache[cache_key] = (time.time(), data)
+            self.stats['total_requests'] += 1
+            self.stats['successful'] += 1
+            
+            return data
+            
+        except requests.exceptions.HTTPError as e:
+            print(f"❌ HTTP error for {endpoint}: {e}")
+            self.stats['total_requests'] += 1
+            self.stats['failed'] += 1
+            return None
+            
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Request failed for {endpoint}: {e}")
+            self.stats['total_requests'] += 1
+            self.stats['failed'] += 1
+            return None
+            
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON decode error for {endpoint}: {e}")
+            self.stats['total_requests'] += 1
+            self.stats['failed'] += 1
+            return None
     
     # ==================== AIRPORT METHODS ====================
     
@@ -106,13 +115,6 @@ class AeroDataBoxClient:
         """Get airport information"""
         code_type = get_code_type(airport_code)
         url = build_url('AIRPORT_INFO', 
-                       codeType=code_type, code=airport_code)
-        return self._make_request(url)
-    
-    def get_airport_time(self, airport_code: str) -> Optional[Dict]:
-        """Get local time at airport"""
-        code_type = get_code_type(airport_code)
-        url = build_url('AIRPORT_TIME', 
                        codeType=code_type, code=airport_code)
         return self._make_request(url)
     
@@ -165,26 +167,6 @@ class AeroDataBoxClient:
         url = build_url('GLOBAL_DELAYS')
         return self._make_request(url)
     
-    # ==================== MISC METHODS ====================
-    
-    def get_airport_weather(self, airport_code: str) -> Optional[Dict]:
-        """Get airport weather"""
-        code_type = get_code_type(airport_code)
-        url = build_url('AIRPORT_WEATHER',
-                       codeType=code_type, code=airport_code)
-        return self._make_request(url)
-    
-    def get_distance_time(self, from_airport: str, 
-                         to_airport: str) -> Optional[Dict]:
-        """Get distance and flight time between airports"""
-        from_type = get_code_type(from_airport)
-        to_type = get_code_type(to_airport)
-        
-        url = build_url('DISTANCE_TIME',
-                       codeType=from_type, codeFrom=from_airport,
-                       codeTo=to_airport)
-        return self._make_request(url)
-    
     # ==================== BATCH METHODS ====================
     
     def get_multiple_airports(self, airport_codes: List[str]) -> Dict[str, Optional[Dict]]:
@@ -194,7 +176,7 @@ class AeroDataBoxClient:
         def fetch_one(code):
             return code, self.get_airport_info(code)
         
-        with ThreadPoolExecutor(max_workers=FETCH_STRATEGY['parallel_workers']) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             futures = {executor.submit(fetch_one, code): code for code in airport_codes}
             for future in as_completed(futures):
                 code, data = future.result()
@@ -214,14 +196,13 @@ class AeroDataBoxClient:
             for future in as_completed(futures):
                 code, data = future.result()
                 results[code] = data
-                time.sleep(0.5)
         
         return results
     
     def clear_cache(self):
         """Clear all cached data"""
         self.cache.clear()
-        print("Cache cleared")
+        print("✅ Cache cleared")
     
     def get_stats(self) -> Dict:
         """Get client statistics"""

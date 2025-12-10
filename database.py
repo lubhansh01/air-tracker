@@ -19,8 +19,8 @@ class FlightDatabase:
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS airport (
             airport_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            icao_code TEXT UNIQUE,
-            iata_code TEXT UNIQUE,
+            icao_code TEXT,
+            iata_code TEXT,
             name TEXT,
             city TEXT,
             country TEXT,
@@ -28,7 +28,8 @@ class FlightDatabase:
             latitude REAL,
             longitude REAL,
             timezone TEXT,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(iata_code)
         )
         ''')
         
@@ -61,9 +62,7 @@ class FlightDatabase:
             airline_code TEXT,
             airline_name TEXT,
             flight_date DATE,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (origin_iata) REFERENCES airport(iata_code),
-            FOREIGN KEY (destination_iata) REFERENCES airport(iata_code)
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
         
@@ -78,8 +77,7 @@ class FlightDatabase:
             avg_delay_min REAL,
             median_delay_min REAL,
             canceled_flights INTEGER,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (airport_iata) REFERENCES airport(iata_code)
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         ''')
         
@@ -93,7 +91,17 @@ class FlightDatabase:
             else:
                 cursor = self.conn.cursor()
                 if params:
-                    cursor.execute(query, params)
+                    # Convert all params to appropriate types
+                    processed_params = []
+                    for param in params:
+                        if param is None:
+                            processed_params.append(None)
+                        elif isinstance(param, (dict, list)):
+                            processed_params.append(str(param))
+                        else:
+                            processed_params.append(param)
+                    
+                    cursor.execute(query, tuple(processed_params))
                 else:
                     cursor.execute(query)
                 
