@@ -1,5 +1,5 @@
 """
-Database for 15 airports
+Database for 15 airports - FIXED VERSION
 """
 
 import sqlite3
@@ -11,8 +11,13 @@ class FlightDatabase:
         self.create_tables()
     
     def create_tables(self):
-        """Create tables for 15 airports"""
+        """Create tables for 15 airports - FIXED"""
         cursor = self.conn.cursor()
+        
+        # Drop existing tables to avoid conflicts
+        cursor.execute('DROP TABLE IF EXISTS airport')
+        cursor.execute('DROP TABLE IF EXISTS flights')
+        cursor.execute('DROP TABLE IF EXISTS airport_delays')
         
         # Airport table with region
         cursor.execute('''
@@ -81,6 +86,7 @@ class FlightDatabase:
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_delays_date ON airport_delays(delay_date)')
         
         self.conn.commit()
+        print("✅ Database tables created successfully")
     
     def execute_query(self, query, params=None, return_df=False):
         """Execute SQL query"""
@@ -101,13 +107,16 @@ class FlightDatabase:
                     return cursor.rowcount
         except Exception as e:
             print(f"Query error: {e}")
+            print(f"Query: {query[:100]}...")
+            if params:
+                print(f"Params: {params}")
             return None
     
     def get_airport_stats(self):
         """Get statistics for all airports"""
         query = '''
         SELECT 
-            a.region,
+            COALESCE(a.region, 'Unknown') as region,
             COUNT(DISTINCT a.iata_code) as airports,
             COUNT(DISTINCT f.flight_id) as flights,
             COALESCE(ROUND(AVG(d.avg_delay_min), 1), 0) as avg_delay
@@ -116,7 +125,7 @@ class FlightDatabase:
             AND DATE(f.flight_date) = DATE('now')
         LEFT JOIN airport_delays d ON a.iata_code = d.airport_iata 
             AND d.delay_date = DATE('now')
-        GROUP BY a.region
+        GROUP BY COALESCE(a.region, 'Unknown')
         ORDER BY airports DESC
         '''
         return self.execute_query(query, return_df=True)
