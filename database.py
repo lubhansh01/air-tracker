@@ -1,6 +1,10 @@
+"""
+Database management for Flight Analytics
+"""
+
 import sqlite3
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 
 class FlightDatabase:
     def __init__(self, db_name='flight_analytics.db'):
@@ -92,7 +96,13 @@ class FlightDatabase:
                     cursor.execute(query, params)
                 else:
                     cursor.execute(query)
-                return cursor.fetchall()
+                
+                # For SELECT queries, fetch results
+                if query.strip().upper().startswith('SELECT'):
+                    return cursor.fetchall()
+                else:
+                    self.conn.commit()
+                    return cursor.rowcount
         except Exception as e:
             print(f"Query error: {e}")
             return None

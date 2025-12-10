@@ -5,7 +5,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from swagger_clients import AeroDataBoxClient
+from aerodatabox_client import AeroDataBoxClient
 from config import AIRPORT_CODES
 
 def test_all_endpoints():

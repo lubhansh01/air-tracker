@@ -1,30 +1,35 @@
 """
-Main entry point with health check
+Main entry point for Air Tracker application
 """
-import streamlit as st
-from dashboard import st  # Import streamlit from dashboard
+
 import sys
 import os
+from dotenv import load_dotenv
 
-def health_check():
-    """Check if all components are working"""
-    print("🔍 Running health check...")
-    
-    # Check environment variables
-    from dotenv import load_dotenv
+def check_environment():
+    """Check if all required environment variables are set"""
     load_dotenv()
     
     api_key = os.getenv('AERODATABOX_API_KEY')
+    
     if not api_key or api_key == 'your_actual_api_key_here':
-        print("❌ Please update your API key in .env file")
+        print("❌ ERROR: Please update your API key in .env file")
+        print("1. Get your API key from RapidAPI")
+        print("2. Update .env file with: AERODATABOX_API_KEY=your_key_here")
         return False
     
-    print("✅ Environment variables loaded")
+    print("✅ Environment variables loaded successfully")
     return True
 
 if __name__ == "__main__":
-    if health_check():
-        print("🚀 Starting Air Tracker Dashboard...")
-        # The dashboard will be run by streamlit
+    print("🔍 Checking environment...")
+    
+    if check_environment():
+        print("\n🚀 Air Tracker: Flight Analytics Dashboard")
+        print("=" * 50)
+        print("\nTo run the dashboard:")
+        print("1. streamlit run dashboard.py")
+        print("\nOr run tests:")
+        print("2. python -c \"from aerodatabox_client import AeroDataBoxClient; client = AeroDataBoxClient(); print('Client initialized successfully')\"")
     else:
-        print("❌ Health check failed. Please fix issues above.")
+        sys.exit(1)

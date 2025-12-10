@@ -1,6 +1,9 @@
+"""
+Configuration for AeroDataBox API
+"""
+
 import os
 from dotenv import load_dotenv
-from typing import List, Dict
 
 load_dotenv()
 
@@ -8,94 +11,87 @@ load_dotenv()
 API_KEY = os.getenv('AERODATABOX_API_KEY')
 API_HOST = os.getenv('AERODATABOX_API_HOST', 'aerodatabox.p.rapidapi.com')
 
+BASE_URL = f"https://{API_HOST}"
+
 HEADERS = {
     'X-RapidAPI-Key': API_KEY,
     'X-RapidAPI-Host': API_HOST
 }
 
-BASE_URL = f"https://{API_HOST}"
-
-# ==================== ENDPOINT DEFINITIONS (From Swagger) ====================
+# ==================== ENDPOINTS CONFIGURATION ====================
 ENDPOINTS = {
-    # Airport API (🌎)
-    'AIRPORT_INFO': '/airports/{code}',  # 🌎 Get Airport
-    'AIRPORT_RUNWAYS': '/airports/{code}/runways',
-    'SEARCH_AIRPORTS_LOCATION': '/airports/search/location',
-    'SEARCH_AIRPORTS_IP': '/airports/search/ip',
-    'SEARCH_AIRPORTS_TEXT': '/airports/search/text',
+    # AIRPORT API (Tier 1 & 2)
+    'AIRPORT_INFO': '/airports/{codeType}/{code}',
+    'AIRPORT_RUNWAYS': '/airports/{codeType}/{code}/runways',
+    'AIRPORT_SEARCH_LOCATION': '/airports/search/location',
+    'AIRPORT_SEARCH_TEXT': '/airports/search/term',
     
-    # Flights API (🗓️)
-    'AIRPORT_SCHEDULE': '/flights/airports/{code}/{direction}',  # 🗓️ FIDS & Schedules
-    'FLIGHT_STATUS': '/flights/{flightNumber}/{date}',  # 🗓️ Flight Status
-    'FLIGHT_HISTORY': '/flights/{identifier}/range/{fromDate}/{toDate}',  # 🗓️ Flight History & Schedule
-    'FLIGHT_DATES': '/flights/{identifier}/dates',  # 🗓️ Flight Departure/Arrival Dates
-    'SEARCH_FLIGHTS': '/flights/search/term',  # 🗓️ Search Flight Numbers
+    # AIRCRAFT API (Tier 1 & 2)
+    'AIRCRAFT_INFO': '/aircrafts/{searchBy}/{searchParam}',
+    'AIRCRAFT_REG_HISTORY': '/aircrafts/{searchBy}/{searchParam}/registrations',
+    'SEARCH_AIRCRAFT': '/aircrafts/search/term',
+    'AIRCRAFT_IMAGE': '/aircrafts/reg/{reg}/image/beta',
     
-    # Aircraft API (✈️)
-    'AIRCRAFT_INFO': '/aircraft/{registration}',  # ✈️ Get aircraft
-    'AIRCRAFT_REGISTRATION_HISTORY': '/aircraft/{identifier}/registrations',
-    'AIRLINE_FLEET': '/airlines/{icao}/fleet',
-    'AIRCRAFT_PHOTO': '/aircraft/{registration}/photo',
-    'SEARCH_AIRCRAFT': '/aircraft/search/term',
+    # FLIGHT API (Tier 2)
+    'FLIGHT_STATUS': '/flights/{searchBy}/{searchParam}',
+    'FLIGHT_STATUS_DATE': '/flights/{searchBy}/{searchParam}/{dateLocal}',
+    'AIRPORT_FIDS': '/flights/airports/{codeType}/{code}',
+    'AIRPORT_FIDS_RANGE': '/flights/airports/{codeType}/{code}/{fromLocal}/{toLocal}',
+    'SEARCH_FLIGHTS': '/flights/search/term',
+    'FLIGHT_DATES': '/flights/{searchBy}/{searchParam}/dates',
     
-    # Statistical API (📊)
-    'AIRPORT_DELAYS': '/airports/{code}/delays',  # 📊 Airport delays
-    'AIRPORT_ROUTES': '/airports/{code}/statistics/routes/daily',
-    'FLIGHT_DELAY_STATS': '/flights/{flightNumber}/statistics/delays',
-    'GLOBAL_DELAYS': '/statistics/delays/global',
+    # STATISTICAL API (Tier 3)
+    'AIRPORT_DELAYS': '/airports/{codeType}/{code}/delays',
+    'GLOBAL_DELAYS': '/airports/delays',
+    'AIRPORT_ROUTES': '/airports/{codeType}/{code}/stats/routes/daily',
     
-    # Miscellaneous API
-    'AIRPORT_TIME': '/airports/{code}/time/local',
-    'AIRPORT_SUN_TIMES': '/airports/{code}/time/sun',
-    'DISTANCE_BETWEEN': '/airports/distance/{fromCode}/{toCode}',
-    'FLIGHT_TIME': '/flights/time/{fromCode}/{toCode}',
-    'AIRPORT_WEATHER': '/airports/{code}/weather',
-    'COUNTRIES_LIST': '/countries'
+    # MISCELLANEOUS API (Tier 1 & 2)
+    'AIRPORT_TIME': '/airports/{codeType}/{code}/time/local',
+    'AIRPORT_SOLAR_TIME': '/airports/{codeType}/{code}/time/solar',
+    'DISTANCE_TIME': '/airports/{codeType}/{codeFrom}/distance-time/{codeTo}',
+    'AIRPORT_WEATHER': '/airports/{codeType}/{code}/weather',
+    'COUNTRIES_LIST': '/countries',
 }
 
-# ==================== OPTIMIZATION SETTINGS ====================
-# Selected airports (mix of major international airports)
-AIRPORT_CODES = ['DEL', 'BOM', 'LHR', 'JFK', 'DXB', 'SIN', 'CDG', 'FRA']
+# ==================== APPLICATION SETTINGS ====================
 
-# Parallel processing settings
-PARALLEL_WORKERS = {
-    'airports': 4,      # For airport info fetching
-    'flights': 3,       # For flight schedule fetching
-    'aircraft': 5,      # For aircraft info fetching
-    'delays': 2         # For delay stats fetching
+AIRPORT_CODES = ['DEL', 'BOM', 'LHR', 'JFK', 'DXB', 'SIN']
+
+# Code type mapping (IATA vs ICAO)
+CODE_TYPES = {
+    'iata': 'iata',
+    'icao': 'icao'
 }
 
-# Data limits for optimization
-DATA_LIMITS = {
-    'max_airports': 6,           # Max airports to process
-    'max_flights_per_airport': 25, # Max flights per airport
-    'max_aircraft': 15,          # Max aircraft details to fetch
-    'cache_duration_seconds': 300, # Cache duration (5 minutes)
-    'max_retries': 3,            # Max retry attempts
-    'retry_delay': 1,            # Seconds between retries
+# Data fetching strategy
+FETCH_STRATEGY = {
+    'timeout': 10,
+    'max_retries': 2,
+    'cache_ttl': 300,  # 5 minutes cache
+    'parallel_workers': 3,
+    'rate_limit_delay': 0.5
 }
 
-# API Tier awareness (from Swagger labels)
-TIER_PRIORITY = {
-    'low': ['AIRPORT_INFO', 'AIRPORT_TIME', 'COUNTRIES_LIST'],
-    'medium': ['AIRPORT_SCHEDULE', 'AIRCRAFT_INFO', 'AIRPORT_DELAYS'],
-    'high': ['FLIGHT_HISTORY', 'AIRPORT_ROUTES', 'FLIGHT_DELAY_STATS']
-}
-
-def get_endpoint_url(endpoint_name: str, **kwargs) -> str:
-    """Build complete endpoint URL with parameters"""
+def build_url(endpoint_name, **params):
+    """Build complete URL for an endpoint"""
     if endpoint_name not in ENDPOINTS:
         raise ValueError(f"Unknown endpoint: {endpoint_name}")
     
     endpoint = ENDPOINTS[endpoint_name]
     
-    # Replace path parameters
-    for key, value in kwargs.items():
-        if f'{{{key}}}' in endpoint:
-            endpoint = endpoint.replace(f'{{{key}}}', str(value))
+    # Replace all parameters in the endpoint
+    for key, value in params.items():
+        placeholder = f'{{{key}}}'
+        if placeholder in endpoint:
+            endpoint = endpoint.replace(placeholder, str(value))
     
     return BASE_URL + endpoint
 
-def get_headers() -> Dict:
-    """Get headers with optional additional headers"""
-    return HEADERS.copy()
+def get_code_type(code):
+    """Determine if code is IATA (3 letters) or ICAO (4 letters)"""
+    if len(code) == 3 and code.isalpha():
+        return 'iata'
+    elif len(code) == 4 and code.isalpha():
+        return 'icao'
+    else:
+        return 'iata'  # Default to IATA
