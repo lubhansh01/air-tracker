@@ -36,7 +36,9 @@ st.set_page_config(page_title="AirTracker — Flight Analytics", layout="wide", 
 # ----------------------
 # Helpers: DB loaders + ETL runner (tz-safe)
 # ----------------------
-def get_aerodatabox_key() -> str | None:
+from typing import Optional
+
+def get_aerodatabox_key() -> Optional[str]:
     try:
         if hasattr(st, "secrets") and "AERODATABOX_API_KEY" in st.secrets:
             return st.secrets["AERODATABOX_API_KEY"]
