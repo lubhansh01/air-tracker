@@ -1,5 +1,5 @@
 """
-Configuration for AeroDataBox API
+Configuration for 15 airports (national and international)
 """
 
 import os
@@ -11,57 +11,64 @@ load_dotenv()
 API_KEY = os.getenv('AERODATABOX_API_KEY')
 API_HOST = os.getenv('AERODATABOX_API_HOST', 'aerodatabox.p.rapidapi.com')
 
-BASE_URL = f"https://{API_HOST}"
+# ==================== AIRPORT SELECTION (15 Airports) ====================
+# Mix of National (Indian) and International airports
+AIRPORT_CODES = [
+    # National (India) - 7 airports
+    'DEL',  # Delhi - Indira Gandhi International
+    'BOM',  # Mumbai - Chhatrapati Shivaji Maharaj
+    'MAA',  # Chennai
+    'BLR',  # Bengaluru
+    'HYD',  # Hyderabad
+    'CCU',  # Kolkata
+    'AMD',  # Ahmedabad
+    
+    # International - 8 airports
+    'LHR',  # London Heathrow
+    'JFK',  # New York JFK
+    'DXB',  # Dubai
+    'SIN',  # Singapore Changi
+    'CDG',  # Paris Charles de Gaulle
+    'FRA',  # Frankfurt
+    'SYD',  # Sydney
+    'NRT',  # Tokyo Narita
+]
 
-HEADERS = {
-    'X-RapidAPI-Key': API_KEY,
-    'X-RapidAPI-Host': API_HOST
+# Group airports by region for better organization
+AIRPORT_GROUPS = {
+    'India': ['DEL', 'BOM', 'MAA', 'BLR', 'HYD', 'CCU', 'AMD'],
+    'Europe': ['LHR', 'CDG', 'FRA'],
+    'North America': ['JFK'],
+    'Middle East': ['DXB'],
+    'Asia Pacific': ['SIN', 'SYD', 'NRT']
 }
 
-# ==================== ENDPOINTS CONFIGURATION ====================
-ENDPOINTS = {
-    # AIRPORT API (Tier 1 & 2)
-    'AIRPORT_INFO': '/airports/{codeType}/{code}',
-    'AIRPORT_RUNWAYS': '/airports/{codeType}/{code}/runways',
-    
-    # AIRCRAFT API (Tier 1 & 2)
-    'AIRCRAFT_INFO': '/aircrafts/{searchBy}/{searchParam}',
-    
-    # FLIGHT API (Tier 2)
-    'FLIGHT_STATUS': '/flights/{searchBy}/{searchParam}',
-    'FLIGHT_STATUS_DATE': '/flights/{searchBy}/{searchParam}/{dateLocal}',
-    'AIRPORT_FIDS': '/flights/airports/{codeType}/{code}',
-    'SEARCH_FLIGHTS': '/flights/search/term',
-    
-    # STATISTICAL API (Tier 3)
-    'AIRPORT_DELAYS': '/airports/{codeType}/{code}/delays',
-    'GLOBAL_DELAYS': '/airports/delays',
-    'AIRPORT_ROUTES': '/airports/{codeType}/{code}/stats/routes/daily',
+# Airport full names for display
+AIRPORT_NAMES = {
+    'DEL': 'Delhi (IGI)',
+    'BOM': 'Mumbai (CSM)',
+    'MAA': 'Chennai',
+    'BLR': 'Bengaluru',
+    'HYD': 'Hyderabad',
+    'CCU': 'Kolkata',
+    'AMD': 'Ahmedabad',
+    'LHR': 'London Heathrow',
+    'JFK': 'New York JFK',
+    'DXB': 'Dubai',
+    'SIN': 'Singapore',
+    'CDG': 'Paris CDG',
+    'FRA': 'Frankfurt',
+    'SYD': 'Sydney',
+    'NRT': 'Tokyo Narita'
 }
 
-# ==================== APPLICATION SETTINGS ====================
-AIRPORT_CODES = ['DEL', 'BOM', 'LHR', 'JFK', 'DXB', 'SIN']
+# ==================== FETCHING STRATEGY ====================
+# How many airports to process in parallel
+PARALLEL_LIMITS = {
+    'airport_info': 5,      # Airport details fetch
+    'flight_schedules': 3,  # Flight schedules fetch
+    'delay_stats': 2        # Delay statistics fetch
+}
 
-def get_code_type(code):
-    """Determine if code is IATA (3 letters) or ICAO (4 letters)"""
-    if len(code) == 3 and code.isalpha():
-        return 'iata'
-    elif len(code) == 4 and code.isalpha():
-        return 'icao'
-    else:
-        return 'iata'  # Default to IATA
-
-def build_url(endpoint_name, **params):
-    """Build complete URL for an endpoint"""
-    if endpoint_name not in ENDPOINTS:
-        raise ValueError(f"Unknown endpoint: {endpoint_name}")
-    
-    endpoint = ENDPOINTS[endpoint_name]
-    
-    # Replace all parameters in the endpoint
-    for key, value in params.items():
-        placeholder = f'{{{key}}}'
-        if placeholder in endpoint:
-            endpoint = endpoint.replace(placeholder, str(value))
-    
-    return BASE_URL + endpoint
+# Cache settings
+CACHE_TTL = 300  # 5 minutes cache

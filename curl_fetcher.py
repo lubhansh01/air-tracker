@@ -1,146 +1,152 @@
 """
-CURL-based data fetcher for AeroDataBox API
-Uses direct curl commands from the API platform
+CURL-based fetcher for 15 airports
 """
 
 import subprocess
 import json
 import os
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from config import AIRPORT_CODES, PARALLEL_LIMITS, CACHE_TTL
 
 class CurlDataFetcher:
-    """Fetches data using curl commands"""
+    """Fetches data for multiple airports using curl"""
     
     def __init__(self):
         self.api_key = os.getenv('AERODATABOX_API_KEY')
         self.api_host = os.getenv('AERODATABOX_API_HOST', 'aerodatabox.p.rapidapi.com')
+        self.cache = {}
         self.stats = {
-            'requests': 0,
-            'success': 0,
-            'failures': 0
+            'total_requests': 0,
+            'successful': 0,
+            'failed': 0,
+            'cache_hits': 0
         }
+        
+        print(f"✅ cURL Fetcher initialized for {len(AIRPORT_CODES)} airports")
     
-    def _run_curl(self, endpoint: str, params: Dict = None) -> Optional[Dict]:
-        """Execute a curl command and return JSON response"""
+    def _run_curl(self, endpoint: str) -> Optional[Dict]:
+        """Execute a curl command"""
+        cache_key = endpoint
+        
+        # Check cache
+        if cache_key in self.cache:
+            cached_time, data = self.cache[cache_key]
+            if time.time() - cached_time < CACHE_TTL:
+                self.stats['cache_hits'] += 1
+                return data
+        
         try:
-            # Build curl command
-            url = f"https://{self.api_host}{endpoint}"
-            
             curl_cmd = [
                 'curl',
                 '--request', 'GET',
-                '--url', url,
+                '--url', f'https://{self.api_host}{endpoint}',
                 '--header', f'x-rapidapi-key: {self.api_key}',
                 '--header', f'x-rapidapi-host: {self.api_host}',
                 '--silent',
-                '--max-time', '30'  # 30 second timeout
+                '--max-time', '15'
             ]
             
-            # Add parameters if provided
-            if params:
-                for key, value in params.items():
-                    if value:
-                        curl_cmd.extend(['--data-urlencode', f'{key}={value}'])
+            self.stats['total_requests'] += 1
             
-            self.stats['requests'] += 1
-            print(f"🌐 Curl: {endpoint.split('/')[-1]}")
-            
-            # Execute curl command
             result = subprocess.run(
                 curl_cmd,
                 capture_output=True,
                 text=True,
-                timeout=35
+                timeout=20
             )
             
             if result.returncode == 0:
                 try:
                     data = json.loads(result.stdout)
-                    self.stats['success'] += 1
+                    self.cache[cache_key] = (time.time(), data)
+                    self.stats['successful'] += 1
                     return data
                 except json.JSONDecodeError:
-                    print(f"❌ JSON parse error: {result.stdout[:100]}")
-                    self.stats['failures'] += 1
+                    print(f"❌ JSON error for {endpoint}")
+                    self.stats['failed'] += 1
                     return None
             else:
-                print(f"❌ Curl error: {result.stderr}")
-                self.stats['failures'] += 1
+                print(f"❌ Curl error for {endpoint}: {result.stderr[:100]}")
+                self.stats['failed'] += 1
                 return None
                 
-        except subprocess.TimeoutExpired:
-            print(f"❌ Timeout fetching {endpoint}")
-            self.stats['failures'] += 1
-            return None
         except Exception as e:
-            print(f"❌ Error: {e}")
-            self.stats['failures'] += 1
+            print(f"❌ Error {endpoint}: {e}")
+            self.stats['failed'] += 1
             return None
     
-    # ==================== AIRPORT ENDPOINTS ====================
+    # ==================== BATCH METHODS FOR 15 AIRPORTS ====================
     
-    def get_airport_info(self, airport_code: str) -> Optional[Dict]:
-        """Get airport information (Tier 1)"""
-        endpoint = f"/airports/iata/{airport_code}"
-        return self._run_curl(endpoint)
-    
-    def get_airport_runways(self, airport_code: str) -> Optional[Dict]:
-        """Get airport runways (Tier 1)"""
-        endpoint = f"/airports/iata/{airport_code}/runways"
-        return self._run_curl(endpoint)
-    
-    # ==================== FLIGHT ENDPOINTS ====================
-    
-    def get_airport_schedule(self, airport_code: str, direction: str = "departures") -> Optional[Dict]:
-        """Get airport FIDS (Flight Information Display System) (Tier 2)"""
-        endpoint = f"/flights/airports/iata/{airport_code}/{direction}"
-        return self._run_curl(endpoint)
-    
-    def get_flight_status(self, flight_number: str, date: str = None) -> Optional[Dict]:
-        """Get flight status (Tier 2)"""
-        if date is None:
-            date = datetime.now().strftime('%Y-%m-%d')
+    def get_multiple_airports_info(self, airport_codes: List[str]) -> Dict[str, Optional[Dict]]:
+        """Get info for multiple airports in parallel"""
+        results = {}
         
+        def fetch_one(code):
+            endpoint = f"/airports/iata/{code}"
+            return code, self._run_curl(endpoint)
+        
+        with ThreadPoolExecutor(max_workers=PARALLEL_LIMITS['airport_info']) as executor:
+            futures = {executor.submit(fetch_one, code): code for code in airport_codes}
+            for future in as_completed(futures):
+                code, data = future.result()
+                results[code] = data
+                time.sleep(0.3)  # Small delay between requests
+        
+        return results
+    
+    def get_multiple_flight_schedules(self, airport_codes: List[str]) -> Dict[str, Optional[Dict]]:
+        """Get flight schedules for multiple airports"""
+        results = {}
+        
+        def fetch_one(code):
+            endpoint = f"/flights/airports/iata/{code}/departures"
+            return code, self._run_curl(endpoint)
+        
+        with ThreadPoolExecutor(max_workers=PARALLEL_LIMITS['flight_schedules']) as executor:
+            futures = {executor.submit(fetch_one, code): code for code in airport_codes}
+            for future in as_completed(futures):
+                code, data = future.result()
+                results[code] = data
+                time.sleep(0.5)  # Longer delay for flight data
+        
+        return results
+    
+    def get_multiple_delay_stats(self, airport_codes: List[str]) -> Dict[str, Optional[Dict]]:
+        """Get delay stats for multiple airports"""
+        results = {}
+        
+        def fetch_one(code):
+            endpoint = f"/airports/iata/{code}/delays"
+            return code, self._run_curl(endpoint)
+        
+        with ThreadPoolExecutor(max_workers=PARALLEL_LIMITS['delay_stats']) as executor:
+            futures = {executor.submit(fetch_one, code): code for code in airport_codes}
+            for future in as_completed(futures):
+                code, data = future.result()
+                results[code] = data
+                time.sleep(1)  # Longest delay for tier 3 endpoints
+        
+        return results
+    
+    def get_flight_status(self, flight_number: str) -> Optional[Dict]:
+        """Get flight status"""
+        date = datetime.now().strftime('%Y-%m-%d')
         endpoint = f"/flights/number/{flight_number}/{date}"
         return self._run_curl(endpoint)
     
-    def search_flights_by_term(self, search_term: str) -> Optional[Dict]:
-        """Search flights by term (Tier 2)"""
-        endpoint = "/flights/search/term"
-        params = {'q': search_term}
-        return self._run_curl(endpoint, params)
-    
-    # ==================== AIRCRAFT ENDPOINTS ====================
-    
     def get_aircraft_info(self, registration: str) -> Optional[Dict]:
-        """Get aircraft information (Tier 1)"""
+        """Get aircraft info"""
         endpoint = f"/aircrafts/reg/{registration}"
         return self._run_curl(endpoint)
     
-    # ==================== STATISTICAL ENDPOINTS ====================
-    
-    def get_airport_delays(self, airport_code: str) -> Optional[Dict]:
-        """Get airport delays (Tier 3)"""
-        endpoint = f"/airports/iata/{airport_code}/delays"
-        return self._run_curl(endpoint)
-    
-    def get_global_delays(self) -> Optional[Dict]:
-        """Get global delays (Tier 3)"""
-        endpoint = "/airports/delays"
-        return self._run_curl(endpoint)
-    
-    # ==================== MISC ENDPOINTS ====================
-    
-    def get_airport_time(self, airport_code: str) -> Optional[Dict]:
-        """Get local time at airport (Tier 1)"""
-        endpoint = f"/airports/iata/{airport_code}/time/local"
-        return self._run_curl(endpoint)
-    
-    def get_countries(self) -> Optional[Dict]:
-        """Get all countries (Tier 1)"""
-        endpoint = "/countries"
-        return self._run_curl(endpoint)
+    def clear_cache(self):
+        """Clear cache"""
+        self.cache.clear()
+        print("✅ Cache cleared")
     
     def get_stats(self) -> Dict:
         """Get fetcher statistics"""
