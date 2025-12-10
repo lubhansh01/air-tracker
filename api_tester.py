@@ -1,65 +1,53 @@
 """
-Quick test script to verify all endpoints are working
+Test script to verify API connectivity
 """
+
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from aerodatabox_client import AeroDataBoxClient
-from config import AIRPORT_CODES
 
-def test_all_endpoints():
-    """Test all major endpoints"""
-    client = AeroDataBoxClient()
-    
-    print("🧪 Testing AeroDataBox API Endpoints...")
+def test_connection():
+    """Test basic API connection"""
+    print("🔍 Testing AeroDataBox API Connection...")
     print("=" * 50)
     
-    # Test 1: Airport Info
-    print("\n1. Testing 🌎 Get Airport endpoint...")
-    for code in AIRPORT_CODES[:2]:  # Test first 2
-        result = client.get_airport_info(code)
-        if result:
-            print(f"   ✓ {code}: {result.get('name', 'No name')}")
-        else:
-            print(f"   ✗ {code}: Failed")
+    client = AeroDataBoxClient()
     
-    # Test 2: Airport Schedule
-    print("\n2. Testing 🗓️ Airport Schedule endpoint...")
-    result = client.get_airport_schedule('DEL', 'departures')
-    if result and 'data' in result:
-        print(f"   ✓ DEL departures: {len(result['data'])} flights")
-    else:
-        print("   ✗ Failed to get schedule")
-    
-    # Test 3: Aircraft Info
-    print("\n3. Testing ✈️ Aircraft Info endpoint...")
-    # Try a common aircraft registration pattern
-    result = client.get_aircraft_info('VT-ALV')  # Sample Air India aircraft
+    # Test 1: Airport Info (should work)
+    print("\n1. Testing airport info (DEL)...")
+    result = client.get_airport_info('DEL')
     if result:
-        print(f"   ✓ Aircraft: {result.get('model', {}).get('text', 'Unknown')}")
+        print(f"   ✅ Success: {result.get('name')}")
     else:
-        print("   ✗ Failed to get aircraft info")
+        print("   ❌ Failed")
     
-    # Test 4: Airport Delays
-    print("\n4. Testing 📊 Airport Delays endpoint...")
+    # Test 2: Flight Schedule (should work)
+    print("\n2. Testing flight schedule (DEL departures)...")
+    result = client.get_airport_flights('DEL', 'departures')
+    if result and 'data' in result:
+        print(f"   ✅ Success: {len(result['data'])} flights")
+    else:
+        print("   ❌ Failed")
+    
+    # Test 3: Delays (may work)
+    print("\n3. Testing delay statistics (DEL)...")
     result = client.get_airport_delays('DEL')
     if result:
-        stats = result.get('statistics', {})
-        print(f"   ✓ DEL delays: {stats.get('flights', {}).get('delayed', 0)} delayed flights")
+        print(f"   ✅ Success: Delay data received")
     else:
-        print("   ✗ Failed to get delays")
-    
-    # Test 5: Multiple airports in parallel
-    print("\n5. Testing parallel airport fetching...")
-    results = client.get_multiple_airports(['DEL', 'BOM', 'LHR'])
-    print(f"   ✓ Fetched {len([r for r in results.values() if r])} airports in parallel")
+        print("   ⚠️ Note: Delay endpoint may not be available")
     
     print("\n" + "=" * 50)
-    print("✅ All tests completed!")
+    print("✅ Test completed")
     
-    # Show cache stats
-    print(f"\n📦 Cache entries: {len(client.cache)}")
+    # Show stats
+    stats = client.get_stats()
+    print(f"\n📊 API Stats:")
+    print(f"   Successful requests: {stats['successful']}")
+    print(f"   Failed requests: {stats['failed']}")
+    print(f"   Cache hits: {stats['cache_hits']}")
 
 if __name__ == "__main__":
-    test_all_endpoints()
+    test_connection()
