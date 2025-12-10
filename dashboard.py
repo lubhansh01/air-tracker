@@ -1,6 +1,6 @@
 """
 Air Tracker: Flight Analytics Dashboard
-Main Streamlit application with optimized data fetching
+Complete Streamlit application for flight data visualization
 """
 
 import streamlit as st
@@ -16,8 +16,8 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from database import FlightDatabase
-from data_orchestrator import DataOrchestrator
-from swagger_clients import AeroDataBoxClient
+from aerodatabox_client import AeroDataBoxClient
+from data_fetcher import SmartDataFetcher
 import config
 
 # ==================== PAGE CONFIGURATION ====================
@@ -85,20 +85,6 @@ st.markdown("""
         border-radius: 4px;
         margin: 1rem 0;
     }
-    .refresh-btn {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        border: none;
-        padding: 0.75rem 1.5rem;
-        border-radius: 8px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: transform 0.2s;
-    }
-    .refresh-btn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.15);
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -109,12 +95,10 @@ def init_session_state():
         st.session_state.db = FlightDatabase()
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = None
-    if 'orchestrator' not in st.session_state:
-        st.session_state.orchestrator = DataOrchestrator(st.session_state.db)
     if 'client' not in st.session_state:
         st.session_state.client = AeroDataBoxClient()
-    if 'auto_refresh' not in st.session_state:
-        st.session_state.auto_refresh = False
+    if 'fetcher' not in st.session_state:
+        st.session_state.fetcher = SmartDataFetcher(st.session_state.db)
     if 'selected_airport' not in st.session_state:
         st.session_state.selected_airport = 'DEL'
     if 'kpi_data' not in st.session_state:
@@ -180,31 +164,22 @@ def update_kpis():
         st.error(f"Error updating KPIs: {e}")
         st.session_state.kpi_data = {}
 
-def refresh_data(mode="quick"):
-    """Refresh data with specified mode"""
+def refresh_data():
+    """Refresh data from APIs"""
     try:
-        orchestrator = st.session_state.orchestrator
+        fetcher = st.session_state.fetcher
         
-        if mode == "quick":
-            result = orchestrator.quick_refresh()
-        elif mode == "full":
-            result = orchestrator.fetch_all_data_strategically()
-        else:  # smart
-            last_refresh = st.session_state.get('last_refresh_time')
-            current_time = time.time()
+        with st.spinner("Fetching latest data from APIs..."):
+            result = fetcher.fetch_dashboard_data()
+            st.session_state.last_refresh = datetime.now()
+            update_kpis()
             
-            if last_refresh and (current_time - last_refresh) < 1800:  # 30 minutes
-                result = orchestrator.quick_refresh()
+            if result and result.get('success'):
+                return result
             else:
-                result = orchestrator.fetch_all_data_strategically()
-            
-            st.session_state.last_refresh_time = current_time
-        
-        st.session_state.last_refresh = datetime.now()
-        update_kpis()
-        
-        return result
-        
+                st.error("Failed to refresh data")
+                return None
+                
     except Exception as e:
         st.error(f"Error refreshing data: {e}")
         return None
@@ -323,49 +298,13 @@ with st.sidebar:
     st.markdown("---")
     
     # Data Refresh Section
-    st.subheader("🔄 Data Management")
-    
-    refresh_mode = st.radio(
-        "Refresh Mode:",
-        ["⚡ Quick (10-15s)", "🚀 Full Strategic (30-45s)", "🤖 Smart Adaptive"],
-        index=2,
-        help="Quick: Recent flights & delays only\nFull: Complete data refresh\nSmart: Chooses based on last refresh time"
-    )
+    st.subheader("🔄 Data Refresh")
     
     if st.button("🔄 Refresh Live Data", type="primary", use_container_width=True):
-        mode_map = {
-            "⚡ Quick (10-15s)": "quick",
-            "🚀 Full Strategic (30-45s)": "full",
-            "🤖 Smart Adaptive": "smart"
-        }
-        
-        with st.spinner("Fetching latest data..."):
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            # Simulate progress
-            for i in range(5):
-                progress_bar.progress((i + 1) * 20)
-                messages = [
-                    "🌍 Connecting to aviation data sources...",
-                    "✈️ Retrieving flight schedules...",
-                    "🛩️ Fetching aircraft information...",
-                    "⏱️ Updating delay statistics...",
-                    "💾 Processing and storing data..."
-                ]
-                status_text.text(messages[i])
-                time.sleep(0.5)
-            
-            result = refresh_data(mode_map[refresh_mode])
-            progress_bar.progress(100)
-            
-            if result and result.get('success'):
-                status_text.text("✅ Data refresh completed!")
-                st.success(f"✅ Updated {result.get('flights_updated', result.get('flights_stored', 0))} flights in {result.get('time_seconds', 0):.1f}s")
-                st.rerun()
-            else:
-                status_text.text("❌ Refresh failed")
-                st.error("Failed to refresh data")
+        result = refresh_data()
+        if result:
+            st.success(f"✅ Updated {result.get('flights_fetched', 0)} flights in {result.get('time', 0):.1f}s")
+            st.rerun()
     
     if st.session_state.last_refresh:
         st.caption(f"Last refresh: {st.session_state.last_refresh.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -383,14 +322,19 @@ with st.sidebar:
     
     if airports_df is not None and not airports_df.empty:
         airport_options = airports_df['iata_code'].tolist()
-        airport_display = [f"{code} - {airports_df[airports_df['iata_code'] == code]['city'].iloc[0]}" 
-                          for code in airport_options]
         
         selected_airport = st.selectbox(
             "Select Airport",
             options=airport_options,
             format_func=lambda x: f"{x} - {airports_df[airports_df['iata_code'] == x]['city'].iloc[0]}",
             index=0 if 'DEL' in airport_options else 0
+        )
+        st.session_state.selected_airport = selected_airport
+    else:
+        selected_airport = st.selectbox(
+            "Select Airport",
+            options=config.AIRPORT_CODES,
+            index=0
         )
         st.session_state.selected_airport = selected_airport
     
@@ -423,9 +367,6 @@ with st.sidebar:
         - API Integration
         - Data Visualization
         """)
-    
-    # Auto-refresh toggle
-    st.session_state.auto_refresh = st.toggle("🔄 Auto-refresh (every 5 min)", value=False)
 
 # ==================== MAIN CONTENT ====================
 # Header
@@ -436,13 +377,12 @@ if not st.session_state.kpi_data:
     update_kpis()
 
 # ==================== DASHBOARD TABS ====================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "🏠 Overview", 
     "📊 Flight Explorer", 
     "🏢 Airport Analytics", 
     "⏱️ Delay Intelligence", 
-    "🔍 Advanced Queries",
-    "📈 Live Monitor"
+    "🔍 Advanced Queries"
 ])
 
 # Tab 1: Overview Dashboard
@@ -464,7 +404,7 @@ with tab1:
     with col3:
         avg_delay = st.session_state.kpi_data.get("avg_delay", 0)
         delay_color = "#10B981" if avg_delay < 15 else "#F59E0B" if avg_delay < 30 else "#EF4444"
-        st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, {delay_color} 0%, #{delay_color[1:]}80 100%);">', unsafe_allow_html=True)
+        st.markdown(f'<div class="metric-card" style="background: linear-gradient(135deg, {delay_color} 0%, {delay_color}80 100%);">', unsafe_allow_html=True)
         st.markdown(f'<div class="metric-value">{avg_delay:.1f}m</div>', unsafe_allow_html=True)
         st.markdown('<div class="metric-label">Avg. Delay Time</div>', unsafe_allow_html=True)
         st.markdown('</div>', unsafe_allow_html=True)
@@ -565,22 +505,7 @@ with tab1:
     ''', return_df=True)
     
     if recent_flights is not None and not recent_flights.empty:
-        # Color code status
-        def color_status(status):
-            if status in ['Arrived', 'Landed']:
-                return 'background-color: #D1FAE5'
-            elif status == 'Delayed':
-                return 'background-color: #FEF3C7'
-            elif status == 'Cancelled':
-                return 'background-color: #FEE2E2'
-            else:
-                return ''
-        
-        styled_df = recent_flights.style.applymap(
-            lambda x: color_status(x) if pd.notna(x) else '', 
-            subset=['status']
-        )
-        st.dataframe(styled_df, use_container_width=True, height=300)
+        st.dataframe(recent_flights, use_container_width=True, height=300)
     else:
         st.info("No recent flight data available")
 
@@ -603,303 +528,365 @@ with tab2:
     with col3:
         search_button = st.button("Search Flights", type="primary", use_container_width=True)
     
-    # Build dynamic query
-    query_parts = []
-    params = []
+    if search_button and search_query:
+        with st.spinner("Searching flights..."):
+            results = st.session_state.fetcher.search_flights(search_query)
+            
+            if results:
+                st.success(f"Found {len(results)} flights")
+                
+                # Convert to DataFrame for display
+                flights_list = []
+                for flight in results[:20]:  # Limit to 20 flights
+                    flights_list.append({
+                        'Flight': flight.get('number', 'N/A'),
+                        'Airline': flight.get('airline', {}).get('name', 'N/A'),
+                        'From': flight.get('departure', {}).get('airport', {}).get('iata', 'N/A'),
+                        'To': flight.get('arrival', {}).get('airport', {}).get('iata', 'N/A'),
+                        'Scheduled': flight.get('departure', {}).get('scheduledTime', {}).get('local', 'N/A'),
+                        'Status': flight.get('status', 'N/A'),
+                        'Aircraft': flight.get('aircraft', {}).get('reg', 'N/A')
+                    })
+                
+                if flights_list:
+                    results_df = pd.DataFrame(flights_list)
+                    st.dataframe(results_df, use_container_width=True)
+                    
+                    # Export option
+                    csv = results_df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Download Results (CSV)",
+                        data=csv,
+                        file_name=f"flight_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+            else:
+                st.info("No flights found matching your criteria.")
     
-    if search_query:
-        if '-' in search_query and len(search_query.split('-')) == 2:
-            # Route search (e.g., DEL-BOM)
-            origin, dest = search_query.split('-')
-            query_parts.append("(origin_iata = ? AND destination_iata = ?)")
-            params.extend([origin.upper(), dest.upper()])
-        elif search_query.upper() in [code.upper() for code in config.AIRPORT_CODES]:
-            # Airport code search
-            query_parts.append("(origin_iata = ? OR destination_iata = ?)")
-            params.extend([search_query.upper(), search_query.upper()])
-        else:
-            # General search
-            query_parts.append("(flight_number LIKE ? OR airline_name LIKE ?)")
-            params.extend([f"%{search_query}%", f"%{search_query}%"])
+    # Recent flights from database
+    st.markdown("---")
+    st.markdown("### Recent Flights from Database")
     
-    if selected_status != 'All':
-        if selected_status == 'On Time':
-            query_parts.append("status IN ('Arrived', 'Landed', 'On Time')")
-        else:
-            query_parts.append("status = ?")
-            params.append(selected_status)
+    db_flights = st.session_state.db.execute_query('''
+        SELECT flight_number, airline_name, origin_iata, destination_iata,
+               scheduled_departure, status, aircraft_registration
+        FROM flights
+        ORDER BY scheduled_departure DESC
+        LIMIT 50
+    ''', return_df=True)
     
-    # Date range filter
-    query_parts.append("DATE(flight_date) BETWEEN ? AND ?")
-    params.extend([start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')])
-    
-    # Execute query
-    base_query = '''
-    SELECT 
-        flight_number,
-        airline_name,
-        origin_iata,
-        destination_iata,
-        scheduled_departure,
-        scheduled_arrival,
-        actual_departure,
-        actual_arrival,
-        status,
-        aircraft_registration,
-        flight_date
-    FROM flights
-    '''
-    
-    if query_parts:
-        base_query += " WHERE " + " AND ".join(query_parts)
-    
-    base_query += " ORDER BY scheduled_departure DESC LIMIT 200"
-    
-    flights_df = st.session_state.db.execute_query(base_query, params, return_df=True)
-    
-    if flights_df is not None and not flights_df.empty:
-        st.success(f"Found {len(flights_df)} flights matching your criteria")
-        
-        # Display metrics
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            on_time = len(flights_df[flights_df['status'].isin(['Arrived', 'Landed', 'On Time'])])
-            st.metric("On Time", on_time)
-        with col2:
-            delayed = len(flights_df[flights_df['status'] == 'Delayed'])
-            st.metric("Delayed", delayed)
-        with col3:
-            cancelled = len(flights_df[flights_df['status'] == 'Cancelled'])
-            st.metric("Cancelled", cancelled)
-        with col4:
-            st.metric("Total", len(flights_df))
-        
-        # Display flights
-        st.dataframe(
-            flights_df,
-            column_config={
-                "flight_number": "Flight",
-                "airline_name": "Airline",
-                "origin_iata": "From",
-                "destination_iata": "To",
-                "scheduled_departure": "Scheduled",
-                "status": st.column_config.TextColumn(
-                    "Status",
-                    help="Flight status",
-                    width="small"
-                )
-            },
-            use_container_width=True,
-            height=400
-        )
-        
-        # Export option
-        csv = flights_df.to_csv(index=False)
-        st.download_button(
-            label="📥 Download Results (CSV)",
-            data=csv,
-            file_name=f"flight_search_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-            mime="text/csv"
-        )
+    if db_flights is not None and not db_flights.empty:
+        st.dataframe(db_flights, use_container_width=True)
     else:
-        st.info("No flights found matching your criteria. Try broadening your search.")
-        
-        # Show sample flights
-        st.markdown("### Sample Flights")
-        sample_flights = st.session_state.db.execute_query('''
-            SELECT flight_number, airline_name, origin_iata, destination_iata, 
-                   scheduled_departure, status
-            FROM flights
-            ORDER BY RANDOM()
-            LIMIT 10
-        ''', return_df=True)
-        
-        if sample_flights is not None and not sample_flights.empty:
-            st.dataframe(sample_flights, use_container_width=True)
+        st.info("No flight data in database. Click 'Refresh Live Data' to fetch data.")
 
 # Tab 3: Airport Analytics
 with tab3:
-    st.markdown('<h2 class="sub-header">Airport Analytics & Details</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="sub-header">Airport Analytics</h2>', unsafe_allow_html=True)
     
     selected_airport = st.session_state.selected_airport
     
-    # Airport overview
-    airport_info = st.session_state.db.execute_query(
+    # Airport details section
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown(f"### {selected_airport} Airport Details")
+        
+        if st.button(f"🔍 Get Latest Info for {selected_airport}", type="secondary"):
+            with st.spinner(f"Fetching details for {selected_airport}..."):
+                details = st.session_state.fetcher.fetch_airport_details(selected_airport)
+                
+                if details.get('basic_info'):
+                    info = details['basic_info']
+                    st.write(f"**Name:** {info.get('name', 'N/A')}")
+                    st.write(f"**City:** {info.get('municipalityName', 'N/A')}")
+                    st.write(f"**Country:** {info.get('country', {}).get('name', 'N/A')}")
+                    st.write(f"**Timezone:** {info.get('timeZone', 'N/A')}")
+                    
+                    if info.get('location'):
+                        st.write(f"**Coordinates:** {info['location'].get('lat', 'N/A')}, {info['location'].get('lon', 'N/A')}")
+                
+                if details.get('local_time'):
+                    st.write(f"**Local Time:** {details['local_time'].get('local', 'N/A')}")
+                
+                if details.get('weather'):
+                    weather = details['weather']
+                    st.write(f"**Weather:** {weather.get('weather', {}).get('description', 'N/A')}")
+                    st.write(f"**Temperature:** {weather.get('main', {}).get('temp', 'N/A')}°C")
+    
+    with col2:
+        # Quick stats
+        st.markdown("### Quick Stats")
+        
+        # Get stats from database
+        stats_query = '''
+        SELECT 
+            (SELECT COUNT(*) FROM flights WHERE origin_iata = ? AND DATE(flight_date) = DATE('now')) as departures,
+            (SELECT COUNT(*) FROM flights WHERE destination_iata = ? AND DATE(flight_date) = DATE('now')) as arrivals,
+            (SELECT COUNT(*) FROM flights WHERE (origin_iata = ? OR destination_iata = ?) AND status = 'Delayed') as delayed
         '''
-        SELECT name, city, country, continent, timezone, 
-               latitude, longitude, last_updated
-        FROM airport
-        WHERE iata_code = ?
-        ''',
-        (selected_airport,),
-        return_df=True
-    )
+        
+        stats_result = st.session_state.db.execute_query(
+            stats_query, 
+            (selected_airport, selected_airport, selected_airport, selected_airport)
+        )
+        
+        if stats_result:
+            departures, arrivals, delayed = stats_result[0]
+            st.metric("Today's Departures", departures or 0)
+            st.metric("Today's Arrivals", arrivals or 0)
+            st.metric("Delayed Flights", delayed or 0)
     
-    if airport_info is not None and not airport_info.empty:
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            st.markdown("### Airport Information")
-            info_cols = st.columns(2)
+    st.markdown("---")
+    
+    # Airport flights
+    st.markdown("### Recent Flight Activity")
+    
+    if st.button(f"✈️ Get Current Flights for {selected_airport}", type="primary"):
+        with st.spinner(f"Fetching flights for {selected_airport}..."):
+            flights_data = st.session_state.client.get_airport_flights(selected_airport, 'departures')
             
-            with info_cols[0]:
-                st.metric("Airport", airport_info.iloc[0]['name'])
-                st.metric("City", airport_info.iloc[0]['city'])
-                st.metric("Country", airport_info.iloc[0]['country'])
-            
-            with info_cols[1]:
-                st.metric("Continent", airport_info.iloc[0]['continent'])
-                st.metric("Timezone", airport_info.iloc[0]['timezone'])
-                if airport_info.iloc[0]['last_updated']:
-                    st.metric("Last Updated", 
-                             pd.to_datetime(airport_info.iloc[0]['last_updated']).strftime('%Y-%m-%d'))
-        
-        with col2:
-            # Show on map
-            if pd.notna(airport_info.iloc[0]['latitude']) and pd.notna(airport_info.iloc[0]['longitude']):
-                map_data = pd.DataFrame({
-                    'lat': [airport_info.iloc[0]['latitude']],
-                    'lon': [airport_info.iloc[0]['longitude']]
-                })
-                st.map(map_data, zoom=10)
-        
-        st.markdown("---")
-        
-        # Airport statistics
-        st.markdown("### Airport Statistics")
-        
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            departures_today = st.session_state.db.execute_query('''
-                SELECT COUNT(*) FROM flights 
-                WHERE origin_iata = ? AND DATE(flight_date) = DATE('now')
-            ''', (selected_airport,))[0][0]
-            st.metric("Today's Departures", departures_today)
-        
-        with col2:
-            arrivals_today = st.session_state.db.execute_query('''
-                SELECT COUNT(*) FROM flights 
-                WHERE destination_iata = ? AND DATE(flight_date) = DATE('now')
-            ''', (selected_airport,))[0][0]
-            st.metric("Today's Arrivals", arrivals_today)
-        
-        with col3:
-            avg_delay_result = st.session_state.db.execute_query('''
-                SELECT AVG(avg_delay_min) FROM airport_delays 
-                WHERE airport_iata = ? AND delay_date = DATE('now')
-            ''', (selected_airport,))
-            avg_delay = avg_delay_result[0][0] if avg_delay_result and avg_delay_result[0][0] else 0
-            st.metric("Avg Delay Today", f"{avg_delay:.1f}m")
-        
-        with col4:
-            top_destination = st.session_state.db.execute_query('''
-                SELECT destination_iata, COUNT(*) as count
-                FROM flights
-                WHERE origin_iata = ?
-                AND DATE(flight_date) >= DATE('now', '-7 days')
-                GROUP BY destination_iata
-                ORDER BY count DESC
-                LIMIT 1
-            ''', (selected_airport,), return_df=True)
-            
-            if top_destination is not None and not top_destination.empty:
-                st.metric("Top Destination", top_destination.iloc[0]['destination_iata'])
+            if flights_data and 'data' in flights_data:
+                flights_list = []
+                for flight in flights_data['data'][:15]:  # Limit to 15 flights
+                    flights_list.append({
+                        'Flight': flight.get('number', 'N/A'),
+                        'Airline': flight.get('airline', {}).get('name', 'N/A'),
+                        'To': flight.get('arrival', {}).get('airport', {}).get('iata', 'N/A'),
+                        'Scheduled': flight.get('departure', {}).get('scheduledTime', {}).get('local', 'N/A'),
+                        'Status': flight.get('status', 'N/A'),
+                        'Aircraft': flight.get('aircraft', {}).get('reg', 'N/A')
+                    })
+                
+                if flights_list:
+                    flights_df = pd.DataFrame(flights_list)
+                    st.dataframe(flights_df, use_container_width=True)
+                else:
+                    st.info("No current flights found")
             else:
-                st.metric("Top Destination", "N/A")
-        
-        # Flight activity
-        st.markdown("### Recent Flight Activity")
-        
-        flight_activity = st.session_state.db.execute_query('''
-            SELECT 
-                flight_number,
-                airline_name,
-                CASE 
-                    WHEN origin_iata = ? THEN 'Departure'
-                    ELSE 'Arrival'
-                END as direction,
-                CASE 
-                    WHEN origin_iata = ? THEN destination_iata
-                    ELSE origin_iata
-                END as partner_airport,
-                scheduled_departure,
-                scheduled_arrival,
-                status,
-                aircraft_registration
-            FROM flights
-            WHERE (origin_iata = ? OR destination_iata = ?)
-            AND DATE(flight_date) >= DATE('now', '-1 days')
-            ORDER BY scheduled_departure DESC
-            LIMIT 20
-        ''', (selected_airport, selected_airport, selected_airport, selected_airport), return_df=True)
-        
-        if flight_activity is not None and not flight_activity.empty:
-            st.dataframe(flight_activity, use_container_width=True)
-        else:
-            st.info(f"No recent flight activity for {selected_airport}")
-    
-    else:
-        st.warning(f"No information available for airport {selected_airport}")
-        st.info("Try refreshing the data or select a different airport.")
+                st.info("Could not fetch flight data")
 
 # Tab 4: Delay Intelligence
 with tab4:
-    st.markdown('<h2 class="sub-header">Delay Analysis & Intelligence</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="sub-header">Delay Intelligence</h2>', unsafe_allow_html=True)
     
-    # Delay statistics
-    delay_stats = st.session_state.db.execute_query('''
-        SELECT 
-            ad.airport_iata,
-            a.name as airport_name,
-            a.city,
-            ad.delay_date,
-            ad.total_flights,
-            ad.delayed_flights,
-            ad.avg_delay_min,
-            ad.canceled_flights,
-            ROUND((ad.delayed_flights * 100.0 / NULLIF(ad.total_flights, 0)), 2) as delay_percentage
-        FROM airport_delays ad
-        JOIN airport a ON ad.airport_iata = a.iata_code
-        WHERE ad.delay_date >= DATE('now', '-7 days')
-        ORDER BY ad.delay_date DESC, delay_percentage DESC
+    # Global delays
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("🌍 Get Global Delay Report", use_container_width=True):
+            with st.spinner("Fetching global delay statistics..."):
+                global_delays = st.session_state.client.get_global_delays()
+                
+                if global_delays:
+                    st.success("Global delay data loaded")
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("Total Flights", global_delays.get('totalFlights', 0))
+                    with col_b:
+                        st.metric("Delayed", global_delays.get('delayedFlights', 0))
+                    with col_c:
+                        st.metric("Avg Delay", f"{global_delays.get('averageDelayMinutes', 0)}m")
+                else:
+                    st.warning("Could not fetch global delays")
+    
+    with col2:
+        selected_for_delay = st.selectbox(
+            "Select Airport for Delay Analysis",
+            options=config.AIRPORT_CODES,
+            index=0
+        )
+        
+        if st.button(f"⏱️ Analyze {selected_for_delay} Delays", use_container_width=True):
+            with st.spinner(f"Analyzing delays for {selected_for_delay}..."):
+                delays = st.session_state.client.get_airport_delays(selected_for_delay)
+                
+                if delays:
+                    st.success(f"Delay analysis for {selected_for_delay}")
+                    
+                    # Display delay statistics
+                    stats = delays.get('statistics', {})
+                    flights = stats.get('flights', {})
+                    
+                    col_a, col_b, col_c = st.columns(3)
+                    with col_a:
+                        st.metric("Total Flights", flights.get('total', 0))
+                    with col_b:
+                        st.metric("Delayed", flights.get('delayed', 0))
+                    with col_c:
+                        st.metric("Canceled", flights.get('canceled', 0))
+                    
+                    # Create visualization
+                    delay_data = {
+                        'Status': ['On Time', 'Delayed', 'Canceled'],
+                        'Count': [
+                            flights.get('total', 0) - flights.get('delayed', 0) - flights.get('canceled', 0),
+                            flights.get('delayed', 0),
+                            flights.get('canceled', 0)
+                        ]
+                    }
+                    
+                    df = pd.DataFrame(delay_data)
+                    fig = px.pie(df, values='Count', names='Status', 
+                                title=f"Flight Status at {selected_for_delay}")
+                    st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.warning(f"No delay data available for {selected_for_delay}")
+    
+    st.markdown("---")
+    
+    # Historical delay trends from database
+    st.markdown("### Historical Delay Trends")
+    
+    delay_trends = st.session_state.db.execute_query('''
+        SELECT delay_date, airport_iata, delayed_flights, total_flights,
+               ROUND((delayed_flights * 100.0 / NULLIF(total_flights, 0)), 2) as delay_percentage
+        FROM airport_delays
+        WHERE delay_date >= DATE('now', '-7 days')
+        ORDER BY delay_date DESC, delay_percentage DESC
     ''', return_df=True)
     
-    if delay_stats is not None and not delay_stats.empty:
-        # Current delay status
-        current_delays = delay_stats[delay_stats['delay_date'] == datetime.now().strftime('%Y-%m-%d')]
+    if delay_trends is not None and not delay_trends.empty:
+        # Pivot for chart
+        pivot_data = delay_trends.pivot_table(
+            index='delay_date',
+            columns='airport_iata',
+            values='delay_percentage',
+            aggfunc='mean'
+        ).fillna(0)
         
-        if not current_delays.empty:
-            st.markdown("### Current Delay Status")
-            
-            col1, col2, col3 = st.columns(3)
-            
-            with col1:
-                total_delayed = current_delays['delayed_flights'].sum()
-                st.metric("Flights Delayed Right Now", f"{total_delayed:,}")
-            
-            with col2:
-                avg_delay_all = current_delays['avg_delay_min'].mean()
-                st.metric("Average Delay", f"{avg_delay_all:.1f} min")
-            
-            with col3:
-                total_cancelled = current_delays['canceled_flights'].sum()
-                st.metric("Cancelled Flights", f"{total_cancelled:,}")
+        fig = px.line(
+            pivot_data,
+            title="Delay Percentage Trends (Last 7 Days)",
+            markers=True
+        )
+        fig.update_layout(
+            xaxis_title="Date",
+            yaxis_title="Delay Percentage (%)",
+            hovermode="x unified"
+        )
+        st.plotly_chart(fig, use_container_width=True)
         
-        # Visualizations
-        col1, col2 = st.columns(2)
+        # Show data table
+        with st.expander("View Raw Data"):
+            st.dataframe(delay_trends, use_container_width=True)
+    else:
+        st.info("No historical delay data available. Refresh data to see trends.")
+
+# Tab 5: Advanced Queries
+with tab5:
+    st.markdown('<h2 class="sub-header">Advanced Analytics Queries</h2>', unsafe_allow_html=True)
+    
+    # Query selection
+    query_options = {
+        "1. Flights by Aircraft Model": 1,
+        "2. High-Utilization Aircraft": 2,
+        "3. Busiest Airports (Outbound)": 3,
+        "4. Top Destination Airports": 4,
+        "5. Domestic vs International": 5,
+        "6. Recent Arrivals at DEL": 6,
+        "7. Airports with No Arrivals": 7,
+        "8. Airline Performance": 8,
+        "9. Cancelled Flights": 9,
+        "10. Diverse Aircraft Routes": 10,
+        "11. Airport Delay Percentage": 11
+    }
+    
+    selected_query_name = st.selectbox(
+        "Select Analysis Query",
+        options=list(query_options.keys())
+    )
+    
+    if st.button("Run Query", type="primary"):
+        query_number = query_options[selected_query_name]
         
-        with col1:
-            st.markdown("#### Most Delayed Airports (Today)")
-            top_delayed = delay_stats[
-                delay_stats['delay_date'] == datetime.now().strftime('%Y-%m-%d')
-            ].sort_values('delay_percentage', ascending=False).head(10)
+        with st.spinner("Running analysis..."):
+            results = execute_sql_query(query_number)
             
-            if not top_delayed.empty:
-                fig = px.bar(
-                    top_delayed,
-                    x='delay_percentage',
-                    y='airport_name',
-                    orientation='h',
-                    color='avg_delay_min',
-                    color_continuous
+            if results is not None and not results.empty:
+                st.success(f"Query returned {len(results)} rows")
+                st.dataframe(results, use_container_width=True)
+                
+                # Add visualizations for certain queries
+                if query_number == 1:  # Flights by Aircraft Model
+                    if len(results) > 0:
+                        fig = px.bar(
+                            results.head(10),
+                            x='flight_count',
+                            y='model',
+                            orientation='h',
+                            title="Top Aircraft Models by Flight Count"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                elif query_number == 3:  # Busiest Airports
+                    if len(results) > 0:
+                        fig = px.bar(
+                            results,
+                            x='outbound_flights',
+                            y='airport_name',
+                            orientation='h',
+                            title="Busiest Airports by Outbound Flights"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                elif query_number == 5:  # Domestic vs International
+                    if len(results) > 0:
+                        flight_types = results['flight_type'].value_counts()
+                        fig = px.pie(
+                            values=flight_types.values,
+                            names=flight_types.index,
+                            title="Domestic vs International Flights"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                elif query_number == 8:  # Airline Performance
+                    if len(results) > 0:
+                        # Calculate on-time percentage
+                        results['on_time_pct'] = (results['on_time'] * 100.0 / 
+                                                (results['on_time'] + results['delayed'] + results['cancelled'])).round(2)
+                        
+                        top_airlines = results.nlargest(10, 'on_time_pct')
+                        fig = px.bar(
+                            top_airlines,
+                            x='on_time_pct',
+                            y='airline_name',
+                            orientation='h',
+                            title="Top Airlines by On-Time Percentage"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                elif query_number == 11:  # Airport Delay Percentage
+                    if len(results) > 0:
+                        fig = px.bar(
+                            results,
+                            x='delay_percentage',
+                            y='airport_name',
+                            orientation='h',
+                            title="Airports by Delay Percentage"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                
+                # Export option
+                csv = results.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Results (CSV)",
+                    data=csv,
+                    file_name=f"query_{query_number}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.info("No results found for this query.")
+
+# ==================== FOOTER ====================
+st.markdown("---")
+st.markdown(
+    """
+    <div style='text-align: center; color: #666;'>
+    <p>✈️ Air Tracker: Flight Analytics Dashboard | Powered by AeroDataBox API</p>
+    <p>Real-time aviation data with intelligent analytics</p>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
