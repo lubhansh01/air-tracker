@@ -1,0 +1,33 @@
+{
+  "icao": "VABB",
+  "iata": "BOM",
+  "shortName": "Chhatrapati Shivaji",
+  "fullName": "Mumbai Chhatrapati Shivaji",
+  "municipalityName": "Mumbai",
+  "location": {
+    "lat": 19.0887,
+    "lon": 72.8679
+  },
+  "elevation": {
+    "meter": 11.89,
+    "km": 0.01,
+    "mile": 0.01,
+    "nm": 0.01,
+    "feet": 39.0
+  },
+  "country": {
+    "code": "IN",
+    "name": "India"
+  },
+  "continent": {
+    "code": "AS",
+    "name": "Asia"
+  },
+  "timeZone": "Asia/Kolkata",
+  "urls": {
+    "webSite": "https://csmia.adaniairports.com/",
+    "wikipedia": "https://en.wikipedia.org/wiki/Chhatrapati_Shivaji_International_Airport",
+    "flightRadar": "https://www.flightradar24.com/19.09,72.87/14",
+    "googleMaps": "https://www.google.com/maps/@19.088699,72.867897,14z"
+  }
+}
