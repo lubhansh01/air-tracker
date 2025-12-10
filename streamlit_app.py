@@ -165,16 +165,13 @@ st.markdown("---")
 st.subheader("How to populate the DB with live data")
 st.markdown(
 
-'''Locally (recommended for testing):
+#Locally (recommended for testing):
 # #- Ensure you have your AERODATABOX_API_KEY set in your shell:
-     ```
 # export AERODATABOX_API_KEY="your_key_here"
-     ```
 #- Activate your venv and run the fetch script:
 # #  source .venv/bin/activate   # or activate your venv
 #  pip install -r requirements.txt
 #  python scripts/fetch_and_load.py
-     ```
 #- This will create `data/airtracker.db` with tables and insert sample rows.
 #2. Or upload a prepopulated `data/airtracker.db` to the repo and redeploy.
-#3. On Streamlit Cloud, add your key via **Manage app → Settings → Secrets**:'''
+#3. On Streamlit Cloud, add your key via **Manage app → Settings → Secrets**:
