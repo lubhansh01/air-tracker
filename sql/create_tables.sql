@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS flights (
   airline_code TEXT
 );
 
--- airport_delays table
+-- airport delays table
 CREATE TABLE IF NOT EXISTS airport_delays (
   delay_id INTEGER PRIMARY KEY AUTOINCREMENT,
   airport_iata TEXT,
