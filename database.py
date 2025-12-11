@@ -1,5 +1,5 @@
 """
-Database for 15 airports - FIXED VERSION
+Minimal working database
 """
 
 import sqlite3
@@ -11,82 +11,47 @@ class FlightDatabase:
         self.create_tables()
     
     def create_tables(self):
-        """Create tables for 15 airports - FIXED"""
+        """Create only essential tables"""
         cursor = self.conn.cursor()
         
-        # Drop existing tables to avoid conflicts
-        cursor.execute('DROP TABLE IF EXISTS airport')
-        cursor.execute('DROP TABLE IF EXISTS flights')
-        cursor.execute('DROP TABLE IF EXISTS airport_delays')
-        
-        # Airport table with region
+        # Simple airport table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS airport (
             airport_id INTEGER PRIMARY KEY AUTOINCREMENT,
-            icao_code TEXT,
             iata_code TEXT UNIQUE,
             name TEXT,
             city TEXT,
             country TEXT,
-            continent TEXT,
             latitude REAL,
-            longitude REAL,
-            timezone TEXT,
-            region TEXT,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            longitude REAL
         )
         ''')
         
-        # Create index for region-based queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_airport_region ON airport(region)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_airport_iata ON airport(iata_code)')
-        
-        # Flights table
+        # Simple flights table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS flights (
             flight_id TEXT PRIMARY KEY,
             flight_number TEXT,
-            aircraft_registration TEXT,
+            airline_name TEXT,
             origin_iata TEXT,
             destination_iata TEXT,
             scheduled_departure TEXT,
-            actual_departure TEXT,
-            scheduled_arrival TEXT,
-            actual_arrival TEXT,
-            status TEXT,
-            airline_code TEXT,
-            airline_name TEXT,
-            flight_date DATE,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            status TEXT
         )
         ''')
         
-        # Create indexes for flight queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_flights_origin ON flights(origin_iata)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_flights_dest ON flights(destination_iata)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_flights_date ON flights(flight_date)')
-        
-        # Airport delays table
+        # Simple delays table
         cursor.execute('''
         CREATE TABLE IF NOT EXISTS airport_delays (
-            delay_id INTEGER PRIMARY KEY AUTOINCREMENT,
             airport_iata TEXT,
-            delay_date DATE,
             total_flights INTEGER,
             delayed_flights INTEGER,
-            avg_delay_min REAL,
-            median_delay_min REAL,
-            canceled_flights INTEGER,
-            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            avg_delay_min REAL
         )
         ''')
         
-        # Create index for delay queries
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_delays_airport ON airport_delays(airport_iata)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_delays_date ON airport_delays(delay_date)')
-        
         self.conn.commit()
-        print("✅ Database tables created successfully")
+        print("✅ Database ready")
     
     def execute_query(self, query, params=None, return_df=False):
         """Execute SQL query"""
@@ -107,28 +72,7 @@ class FlightDatabase:
                     return cursor.rowcount
         except Exception as e:
             print(f"Query error: {e}")
-            print(f"Query: {query[:100]}...")
-            if params:
-                print(f"Params: {params}")
             return None
-    
-    def get_airport_stats(self):
-        """Get statistics for all airports"""
-        query = '''
-        SELECT 
-            COALESCE(a.region, 'Unknown') as region,
-            COUNT(DISTINCT a.iata_code) as airports,
-            COUNT(DISTINCT f.flight_id) as flights,
-            COALESCE(ROUND(AVG(d.avg_delay_min), 1), 0) as avg_delay
-        FROM airport a
-        LEFT JOIN flights f ON a.iata_code = f.origin_iata 
-            AND DATE(f.flight_date) = DATE('now')
-        LEFT JOIN airport_delays d ON a.iata_code = d.airport_iata 
-            AND d.delay_date = DATE('now')
-        GROUP BY COALESCE(a.region, 'Unknown')
-        ORDER BY airports DESC
-        '''
-        return self.execute_query(query, return_df=True)
     
     def close(self):
         """Close connection"""
