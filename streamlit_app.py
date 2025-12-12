@@ -1,20 +1,22 @@
 # streamlit_app.py
 """
-Streamlit dashboard for Flight Analytics with auto-init for Streamlit Cloud.
+Streamlit dashboard for Flight Analytics with auto-init & demo generator.
 
-Features:
-- Auto-initialize DB schema and insert demo data if tables missing or empty (ephemeral)
-- Load data from SQLAlchemy models via db.py (SessionLocal)
-- Compute arrival/departure delays and show Avg Delay (min)
-- Flight search/filter, airport details, delay analysis, route leaderboards
-- Debug sidebar with DB location and counts
+- Auto-init DB & demo data for Streamlit Cloud (ephemeral SQLite)
+- Sidebar generator to create many synthetic aircraft & flights
+- Computes arrival/departure delays and shows Avg Delay (min)
+- Flight search/filter, airport details, delay analysis and leaderboards
 """
 
 import os
 import time
 import pathlib
 import math
-from datetime import datetime
+import random
+import string
+import uuid
+from datetime import datetime, timedelta
+
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -26,14 +28,12 @@ from sqlalchemy.exc import SQLAlchemyError
 load_dotenv()
 
 # ---------------------------------------------------------------------
-# Auto-init DB & demo data for Streamlit Cloud (ephemeral)
-# Put this BEFORE loading tables so we guarantee the DB/schema exists.
+# Attempt to import ORM helpers if present (db.py). If not present we
+# gracefully fallback to raw SQL via engine.
 # ---------------------------------------------------------------------
-# Try to import convenience helpers from db.py if available (init_db, SessionLocal, models)
 try:
     from db import init_db, SessionLocal, Airport, Aircraft, Flight, AirportDelay
 except Exception:
-    # If import fails, set to None and continue (we'll handle via raw SQL)
     init_db = None
     SessionLocal = None
     Airport = None
@@ -41,12 +41,15 @@ except Exception:
     Flight = None
     AirportDelay = None
 
+# DB URL and engine
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///flight_analytics.db")
 engine = create_engine(DB_URL, future=True)
 
+# ---------------------------------------------------------------------
+# Auto-init DB & demo rows (idempotent). Safe to run on Streamlit Cloud.
+# ---------------------------------------------------------------------
 def _insert_demo_rows(conn, dialect_name):
-    """Insert demo airports, aircraft and flights (idempotent)."""
-    # Demo airports (15)
+    """Insert a small demo dataset (airports, aircraft, flights) idempotently."""
     airports = [
         ("VIDP","DEL","Indira Gandhi Intl","New Delhi","India","Asia",28.5665,77.1031,"Asia/Kolkata"),
         ("VABB","BOM","Chhatrapati Shivaji Intl","Mumbai","India","Asia",19.0896,72.8656,"Asia/Kolkata"),
@@ -64,6 +67,7 @@ def _insert_demo_rows(conn, dialect_name):
         ("VICG","IXC","Chandigarh Airport","Chandigarh","India","Asia",30.6735,76.7885,"Asia/Kolkata"),
         ("VAGO","GOM","Gorakhpur Airport","Gorakhpur","India","Asia",26.7614,83.4494,"Asia/Kolkata")
     ]
+
     demo_aircraft = [
         ("VT-AAA","A320","Airbus","A320","DemoAir"),
         ("VT-BBB","B737","Boeing","B737","DemoAir"),
@@ -71,6 +75,7 @@ def _insert_demo_rows(conn, dialect_name):
         ("VT-DDD","E190","Embraer","E190","DemoAir"),
         ("VT-EEE","ATR72","ATR","ATR72","DemoAir")
     ]
+
     demo_flights = [
         ("DEMO-AI101","AI101","VT-AAA","DEL","BOM","2025-12-12T08:00:00Z","2025-12-12T08:05:00Z","2025-12-12T10:00:00Z","2025-12-12T10:10:00Z","Delayed","AI"),
         ("DEMO-6E202","6E202","VT-BBB","BOM","BLR","2025-12-12T09:00:00Z","2025-12-12T09:00:00Z","2025-12-12T11:00:00Z","2025-12-12T10:55:00Z","On Time","6E")
@@ -95,7 +100,6 @@ def _insert_demo_rows(conn, dialect_name):
             "ON CONFLICT (flight_id) DO NOTHING"
         )
     else:
-        # sqlite
         airport_sql = (
             "INSERT OR IGNORE INTO airport (icao_code,iata_code,name,city,country,continent,latitude,longitude,timezone) "
             "VALUES (:icao,:iata,:name,:city,:country,:continent,:lat,:lon,:tz)"
@@ -138,16 +142,14 @@ def auto_init_db_and_demo():
     """Create schema (via init_db if available) and insert demo rows when DB empty/missing."""
     try:
         if init_db:
-            # This will create tables according to your SQLAlchemy models in db.py
             init_db()
     except Exception:
-        # continue and attempt raw SQL based initialization
         pass
 
     try:
         with engine.begin() as conn:
-            # detect tables
             tables = []
+            dialect = engine.dialect.name
             try:
                 rows = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).all()
                 tables = [r[0] for r in rows]
@@ -159,7 +161,6 @@ def auto_init_db_and_demo():
                     dialect = "postgresql"
                 except Exception:
                     tables = []
-                    dialect = engine.dialect.name
 
             need_demo = False
             if "airport" not in tables or "flights" not in tables:
@@ -175,23 +176,20 @@ def auto_init_db_and_demo():
 
             if need_demo:
                 _insert_demo_rows(conn, dialect)
-                # tiny pause to ensure file write on sqlite
                 time.sleep(0.2)
     except Exception:
-        # If auto-init fails do not crash — errors will be visible in logs/sidebar
         pass
 
-# Run auto-init on startup (safe/idempotent)
+# run auto init (safe)
 auto_init_db_and_demo()
 
 # ---------------------------------------------------------------------
-# Streamlit UI and data loading
+# Sidebar: debug info and demo generator controls
 # ---------------------------------------------------------------------
 st.set_page_config(page_title="Air Tracker — Flight Analytics", layout="wide")
 st.title("✈️ Air Tracker — Flight Analytics")
 st.markdown("Interactive dashboard for airports, flights, and delays.")
 
-# Debug sidebar info
 st.sidebar.markdown("### DEBUG INFO")
 st.sidebar.code(DB_URL)
 if DB_URL.startswith("sqlite"):
@@ -216,19 +214,150 @@ try:
 except Exception as e:
     st.sidebar.write("engine/connect error:", e)
 
-# Load dataframes with caching
+# -------------------------
+# Demo generator controls (sidebar)
+# -------------------------
+st.sidebar.markdown("### Demo data generator")
+AIRCRAFT_PER_AIRPORT = st.sidebar.number_input("Aircraft to create per airport", min_value=1, max_value=20, value=4, step=1)
+FLIGHTS_PER_AIRCRAFT = st.sidebar.number_input("Flights per aircraft", min_value=1, max_value=50, value=6, step=1)
+REUSE_EXISTING = st.sidebar.checkbox("Reuse existing aircraft (don't create new ones if present)", value=False)
+GENERATE_BTN = st.sidebar.button("Generate demo fleet & flights")
+
+# helper small functions
+def _random_registration(prefix="VT"):
+    suffix = ''.join(random.choices(string.ascii_uppercase + string.digits, k=4))
+    return f"{prefix}-{suffix}"
+
+def _random_flight_number(airline_codes=("AI","6E","SG","IX","G8")):
+    return f"{random.choice(airline_codes)}{random.randint(10,999)}"
+
+def _iso(ts):
+    return ts.replace(microsecond=0).isoformat() + "Z"
+
+def _insert_many(engine, aircraft_per_airport, flights_per_aircraft, reuse_existing=False):
+    created_aircraft = 0
+    created_flights = 0
+    dialect = engine.dialect.name
+
+    if dialect == "postgresql":
+        aircraft_insert_sql = text(
+            "INSERT INTO aircraft (registration,model,manufacturer,icao_type_code,owner) "
+            "VALUES (:reg,:model,:manuf,:icao,:owner) ON CONFLICT (registration) DO NOTHING"
+        )
+        flight_insert_sql = text(
+            "INSERT INTO flights (flight_id,flight_number,aircraft_registration,origin_iata,destination_iata,"
+            "scheduled_departure,actual_departure,scheduled_arrival,actual_arrival,status,airline_code) "
+            "VALUES (:flight_id,:flight_number,:aircraft_registration,:origin_iata,:destination_iata,"
+            ":scheduled_departure,:actual_departure,:scheduled_arrival,:actual_arrival,:status,:airline_code) "
+            "ON CONFLICT (flight_id) DO NOTHING"
+        )
+    else:
+        aircraft_insert_sql = text(
+            "INSERT OR IGNORE INTO aircraft (registration,model,manufacturer,icao_type_code,owner) "
+            "VALUES (:reg,:model,:manuf,:icao,:owner)"
+        )
+        flight_insert_sql = text(
+            "INSERT OR IGNORE INTO flights (flight_id,flight_number,aircraft_registration,origin_iata,destination_iata,"
+            "scheduled_departure,actual_departure,scheduled_arrival,actual_arrival,status,airline_code) "
+            "VALUES (:flight_id,:flight_number,:aircraft_registration,:origin_iata,:destination_iata,"
+            ":scheduled_departure,:actual_departure,:scheduled_arrival,:actual_arrival,:status,:airline_code)"
+        )
+
+    with engine.begin() as conn:
+        rows = conn.execute(text("SELECT iata_code FROM airport")).all()
+        airports = [r[0] for r in rows] if rows else []
+        if not airports:
+            return created_aircraft, created_flights
+
+        for airport in airports:
+            owner_prefix = f"Operator-{airport}"
+            existing_regs = []
+            if reuse_existing:
+                existing_rows = conn.execute(text("SELECT registration FROM aircraft WHERE owner LIKE :owner"), {"owner": f"{owner_prefix}%"}).all()
+                existing_regs = [r[0] for r in existing_rows]
+
+            regs_for_airport = existing_regs.copy()
+            to_create = max(0, int(aircraft_per_airport) - len(existing_regs))
+            for i in range(to_create):
+                registration = _random_registration(prefix="VT")
+                model = random.choice(["A320","B737","A321","E190","ATR72"])
+                manuf = "Airbus" if model.startswith("A3") or model.startswith("A") else ("Boeing" if model.startswith("B7") else "Other")
+                try:
+                    conn.execute(aircraft_insert_sql, {"reg":registration,"model":model,"manuf":manuf,"icao":model,"owner":owner_prefix})
+                    created_aircraft += 1
+                    regs_for_airport.append(registration)
+                except Exception:
+                    pass
+
+            if not regs_for_airport:
+                rows_any = conn.execute(text("SELECT registration FROM aircraft LIMIT 50")).all()
+                regs_for_airport = [r[0] for r in rows_any] if rows_any else []
+
+            for reg in regs_for_airport:
+                for _ in range(int(flights_per_aircraft)):
+                    dest = airport
+                    attempts = 0
+                    while dest == airport and attempts < 8:
+                        dest = random.choice(airports)
+                        attempts += 1
+                    start = datetime.utcnow() - timedelta(days=7)
+                    end = datetime.utcnow() + timedelta(days=2)
+                    rand_seconds = random.randint(0, int((end-start).total_seconds()))
+                    sched = start + timedelta(seconds=rand_seconds)
+                    variance = random.randint(-10,60)
+                    actual_dep = sched + timedelta(minutes=variance)
+                    duration_min = random.randint(60,240)
+                    sched_arr = sched + timedelta(minutes=duration_min)
+                    actual_arr = actual_dep + timedelta(minutes=duration_min + random.randint(-5,30))
+                    airline_code = random.choice(["AI","6E","SG","IX","G8","UK","I5"])
+                    flight_number = _random_flight_number((airline_code,))
+                    flight_id = f"{flight_number}-{uuid.uuid4().hex[:6]}"
+                    status = random.choices(["On Time","Delayed","Cancelled"], weights=[65,25,10], k=1)[0]
+                    params = {
+                        "flight_id": flight_id,
+                        "flight_number": flight_number,
+                        "aircraft_registration": reg,
+                        "origin_iata": airport,
+                        "destination_iata": dest,
+                        "scheduled_departure": _iso(sched),
+                        "actual_departure": _iso(actual_dep),
+                        "scheduled_arrival": _iso(sched_arr),
+                        "actual_arrival": _iso(actual_arr),
+                        "status": status,
+                        "airline_code": airline_code
+                    }
+                    try:
+                        conn.execute(flight_insert_sql, params)
+                        created_flights += 1
+                    except Exception:
+                        pass
+
+    return created_aircraft, created_flights
+
+# run generation on button press
+if GENERATE_BTN:
+    st.sidebar.info(f"Generating {AIRCRAFT_PER_AIRPORT} aircraft per airport and {FLIGHTS_PER_AIRCRAFT} flights per aircraft...")
+    ac, fl = _insert_many(engine, AIRCRAFT_PER_AIRPORT, FLIGHTS_PER_AIRCRAFT, reuse_existing=REUSE_EXISTING)
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    st.sidebar.success(f"Inserted ~{ac} aircraft and ~{fl} flights.")
+    st.experimental_rerun()
+
+# ---------------------------------------------------------------------
+# Load dataframes (cached) - prefer ORM if SessionLocal available
+# ---------------------------------------------------------------------
 @st.cache_data(ttl=300)
 def load_dataframes():
     df_airports = pd.DataFrame()
     df_flights = pd.DataFrame()
     df_aircraft = pd.DataFrame()
     df_delays = pd.DataFrame()
-    # Prefer SessionLocal + ORM models if available
     try:
-        if SessionLocal is not None:
+        if SessionLocal is not None and Airport is not None:
             session = SessionLocal()
             try:
-                # Use SQLAlchemy queries to create dataframes
                 df_airports = pd.read_sql(session.query(Airport).statement, session.bind) if Airport is not None else pd.DataFrame()
                 df_flights = pd.read_sql(session.query(Flight).statement, session.bind) if Flight is not None else pd.DataFrame()
                 df_aircraft = pd.read_sql(session.query(Aircraft).statement, session.bind) if Aircraft is not None else pd.DataFrame()
@@ -239,7 +368,6 @@ def load_dataframes():
             finally:
                 session.close()
         else:
-            # Fallback: raw SQL using engine
             with engine.connect() as conn:
                 try:
                     df_airports = pd.read_sql(text("SELECT * FROM airport"), conn)
@@ -258,7 +386,6 @@ def load_dataframes():
                 except Exception:
                     df_delays = pd.DataFrame()
     except Exception:
-        # If load fails, return empty DataFrames and let the UI show helpful messages
         df_airports = pd.DataFrame()
         df_flights = pd.DataFrame()
         df_aircraft = pd.DataFrame()
@@ -267,18 +394,16 @@ def load_dataframes():
 
 df_airports, df_flights, df_aircraft, df_delays = load_dataframes()
 
-# Prepare flights dataframe (copy to avoid modifying cache)
+# Prepare flights DF copy and compute delays
 dff = df_flights.copy() if not df_flights.empty else pd.DataFrame(columns=[
     "flight_id","flight_number","aircraft_registration","origin_iata","destination_iata",
     "scheduled_departure","actual_departure","scheduled_arrival","actual_arrival","status","airline_code"
 ])
 
-# Parse datetimes robustly
 for col in ("scheduled_departure","actual_departure","scheduled_arrival","actual_arrival"):
     if col in dff.columns:
         dff[col] = pd.to_datetime(dff[col], errors="coerce", utc=True)
 
-# Compute delays
 if "actual_arrival" in dff.columns and "scheduled_arrival" in dff.columns:
     dff["arrival_delay_min"] = (dff["actual_arrival"] - dff["scheduled_arrival"]).dt.total_seconds() / 60.0
 else:
@@ -289,7 +414,6 @@ if "actual_departure" in dff.columns and "scheduled_departure" in dff.columns:
 else:
     dff["departure_delay_min"] = np.nan
 
-# Exclude cancelled flights for delay metrics
 if "status" in dff.columns:
     valid_mask = (~dff["status"].astype(str).str.lower().eq("cancelled")) & dff["arrival_delay_min"].notna()
 else:
@@ -300,7 +424,6 @@ if valid_mask.any():
 else:
     avg_arrival_delay = None
 
-# Per-airport aggregates
 if not dff.empty and "destination_iata" in dff.columns:
     per_airport = (
         dff.assign(is_delayed = dff["arrival_delay_min"] > 0)
@@ -313,9 +436,9 @@ if not dff.empty and "destination_iata" in dff.columns:
 else:
     per_airport = pd.DataFrame(columns=["destination_iata","total_arrivals","delayed_arrivals","avg_delay_min"])
 
-# -------------------------
+# ---------------------------------------------------------------------
 # Top-level metrics
-# -------------------------
+# ---------------------------------------------------------------------
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Airports", len(df_airports))
 col2.metric("Flights", len(df_flights))
@@ -328,9 +451,9 @@ else:
 
 st.markdown("---")
 
-# -------------------------
-# Flight search & filter UI
-# -------------------------
+# ---------------------------------------------------------------------
+# Flight search/filter UI
+# ---------------------------------------------------------------------
 with st.expander("Search / Filter Flights"):
     fs1, fs2, fs3, fs4 = st.columns([2,2,2,1])
     search_number = fs1.text_input("Flight number (partial allowed)", value="")
@@ -358,9 +481,9 @@ with st.expander("Search / Filter Flights"):
 
 st.markdown("---")
 
-# -------------------------
-# Airport details
-# -------------------------
+# ---------------------------------------------------------------------
+# Airport Details
+# ---------------------------------------------------------------------
 st.header("Airport Details")
 left, right = st.columns([2,3])
 with left:
@@ -388,9 +511,9 @@ with right:
 
 st.markdown("---")
 
-# -------------------------
+# ---------------------------------------------------------------------
 # Delay Analysis
-# -------------------------
+# ---------------------------------------------------------------------
 st.header("Delay Analysis")
 if not per_airport.empty:
     top_delays = per_airport.sort_values("avg_delay_min", ascending=False).head(15)
@@ -402,9 +525,9 @@ else:
 
 st.markdown("---")
 
-# -------------------------
+# ---------------------------------------------------------------------
 # Route leaderboards
-# -------------------------
+# ---------------------------------------------------------------------
 st.header("Route Leaderboards")
 if not dff.empty:
     route_counts = dff.groupby(['origin_iata','destination_iata']).size().reset_index(name='count').sort_values("count", ascending=False).head(30)
@@ -418,7 +541,7 @@ if not dff.empty:
     st.subheader("Airports by % delayed arrivals")
     st.dataframe(merged.sort_values('pct_delayed', ascending=False).head(20))
 else:
-    st.info("No flight data available. Run ingestion scripts or use the auto-init demo data.")
+    st.info("No flight data available. Use the demo generator or ingestion scripts.")
 
 st.markdown("---")
-st.caption("If numbers appear stale, run `streamlit cache clear` then restart the app. On Streamlit Cloud, DB is ephemeral; for persistent production use a hosted DB.")
+st.caption("If numbers appear stale, run `streamlit cache clear` and restart the app. On Streamlit Cloud the DB is ephemeral; for persistence use a hosted DB.")
