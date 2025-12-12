@@ -1,7 +1,7 @@
-streamlit==1.32.0
-pandas==2.2.0
-numpy==1.26.4
-requests==2.31.0
-plotly==5.19.0
-python-dotenv==1.0.0
-streamlit-aggrid==0.3.4.post3
+streamlit>=1.22
+pandas>=2.0
+sqlalchemy>=2.0
+requests>=2.28
+python-dotenv>=1.0
+plotly>=5.15
+alembic>=1.11  # optional for migrations if switching DBs

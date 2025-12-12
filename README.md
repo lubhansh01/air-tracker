@@ -1,25 +1,33 @@
-# ✈️ Air Tracker: Flight Analytics
+Steps to set up locally:
 
-A comprehensive flight data analytics platform that collects, stores, and visualizes aviation data from the AeroDataBox API.
+git clone ...
 
-## 🚀 Features
+python -m venv venv && source venv/bin/activate
 
-- **Real-time Flight Tracking**: Monitor flights with up-to-date information
-- **Airport Analytics**: Detailed insights for airports worldwide
-- **Performance Metrics**: On-time performance, delay analysis, and more
-- **Interactive Dashboards**: Built with Streamlit for easy exploration
-- **SQL Database**: Structured data storage with optimized queries
-- **API Integration**: Seamless connection with AeroDataBox API
+pip install -r requirements.txt
 
-## 📋 Prerequisites
+Copy .env.example to .env, set RAPIDAPI_KEY and DATABASE_URL.
 
-- Python 3.8+
-- MySQL Server
-- AeroDataBox API key (free tier available)
+Initialize DB: python db.py (the file defines init_db() and will create tables).
 
-## 🛠️ Installation
+Ingest airports: python data_ingest.py (adapt the script to add flights & aircraft ingestion using the correct AeroDataBox flight endpoint).
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd flight-analytics
+Run Streamlit: streamlit run streamlit_app.py
+
+Deploying to Streamlit Cloud:
+
+Push the repository to GitHub, include requirements.txt and .streamlit if needed.
+
+On Streamlit Cloud, link the GitHub repo, add environment variables (RAPIDAPI_KEY and DATABASE_URL — for remote DB use Postgres or MySQL), then deploy.
+
+For SQLite on Streamlit Cloud, note filesystem is ephemeral — use a managed DB (Heroku Postgres / Supabase / RDS) for persistent data.
+
+Notes on production:
+
+Use a proper RDBMS (Postgres/MySQL) for scale.
+
+Add API rate-limit handling, exponential backoff and logging.
+
+Add unit tests where possible and handle edge cases in JSON parsing.
+
+Use background workers (e.g., Airflow / cron / Prefect) for ingestion in production. (For the capstone, a manual/one-shot ingestion script is acceptable.)
