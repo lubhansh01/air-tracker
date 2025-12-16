@@ -217,11 +217,11 @@ except Exception as e:
 # -------------------------
 # Demo generator controls (sidebar)
 # -------------------------
-st.sidebar.markdown("### Demo data generator")
+st.sidebar.markdown("### Data generator")
 AIRCRAFT_PER_AIRPORT = st.sidebar.number_input("Aircraft to create per airport", min_value=1, max_value=20, value=4, step=1)
 FLIGHTS_PER_AIRCRAFT = st.sidebar.number_input("Flights per aircraft", min_value=1, max_value=50, value=6, step=1)
 REUSE_EXISTING = st.sidebar.checkbox("Reuse existing aircraft (don't create new ones if present)", value=False)
-GENERATE_BTN = st.sidebar.button("Generate demo fleet & flights")
+GENERATE_BTN = st.sidebar.button("Generate fleet & flights")
 
 # helper small functions
 def _random_registration(prefix="VT"):
