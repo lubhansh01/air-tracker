@@ -187,7 +187,7 @@ st.markdown("---")
 # --------------------------------------------------
 # SQL QUERY EXPLORER (MENTOR REQUIREMENT)
 # --------------------------------------------------
-st.header("📌 SQL Query Explorer (Evaluation Section)")
+st.header("📌 SQL Query Explorer ")
 
 SQL_QUERIES = {
     "1. Flights per aircraft model": """
