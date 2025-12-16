@@ -1,17 +1,18 @@
 # streamlit_app.py
 """
-Streamlit dashboard for Flight Analytics with auto-init & demo generator.
+Air Tracker — Flight Analytics Dashboard
 
-- Auto-init DB & demo data for Streamlit Cloud (ephemeral SQLite)
-- Sidebar generator to create many synthetic aircraft & flights
-- Computes arrival/departure delays and shows Avg Delay (min)
-- Flight search/filter, airport details, delay analysis and leaderboards
-- SQL Query Explorer for evaluation (11 queries)
+Includes:
+- Auto DB initialization (Streamlit Cloud safe)
+- Synthetic data generator
+- Flight filtering (date, airline, status)
+- Airport details
+- Delay analysis
+- Route leaderboards
+- SQL Query Explorer (11 evaluation queries)
 """
 
 import os
-import time
-import pathlib
 import math
 import random
 import string
@@ -27,44 +28,18 @@ from sqlalchemy import create_engine, text
 
 load_dotenv()
 
-# ---------------------------------------------------------------------
-# Attempt to import ORM helpers if present (db.py)
-# ---------------------------------------------------------------------
-try:
-    from db import init_db, SessionLocal, Airport, Aircraft, Flight, AirportDelay
-except Exception:
-    init_db = None
-    SessionLocal = None
-    Airport = None
-    Aircraft = None
-    Flight = None
-    AirportDelay = None
-
+# --------------------------------------------------
+# DATABASE
+# --------------------------------------------------
 DB_URL = os.getenv("DATABASE_URL", "sqlite:///flight_analytics.db")
 engine = create_engine(DB_URL, future=True)
 
-# ---------------------------------------------------------------------
-# AUTO INIT DATABASE + DEMO DATA
-# ---------------------------------------------------------------------
-def auto_init_db_and_demo():
-    try:
-        if init_db:
-            init_db()
-    except Exception:
-        pass
-
-auto_init_db_and_demo()
-
-# ---------------------------------------------------------------------
-# PAGE CONFIG
-# ---------------------------------------------------------------------
 st.set_page_config(page_title="Air Tracker — Flight Analytics", layout="wide")
-st.title("✈️ Air Tracker — Flight Analytics")
-st.markdown("Interactive dashboard for airports, flights, delays, and SQL analytics.")
+st.title("✈️ Air Tracker — Flight Analytics Dashboard")
 
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 # LOAD DATA
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 @st.cache_data(ttl=300)
 def load_data():
     with engine.connect() as conn:
@@ -75,12 +50,13 @@ def load_data():
 
 df_airports, df_flights, df_aircraft = load_data()
 
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 # PREPROCESS FLIGHTS
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 dff = df_flights.copy()
 
-for col in ["scheduled_departure", "actual_departure", "scheduled_arrival", "actual_arrival"]:
+for col in ["scheduled_departure", "actual_departure",
+            "scheduled_arrival", "actual_arrival"]:
     if col in dff.columns:
         dff[col] = pd.to_datetime(dff[col], errors="coerce", utc=True)
 
@@ -89,16 +65,16 @@ dff["arrival_delay_min"] = (
     .dt.total_seconds() / 60
 )
 
-valid_delay = dff[
+valid_delays = dff[
     dff["arrival_delay_min"].notna() &
     (~dff["status"].str.lower().eq("cancelled"))
 ]
 
-avg_delay = round(valid_delay["arrival_delay_min"].mean(), 1) if not valid_delay.empty else None
+avg_delay = round(valid_delays["arrival_delay_min"].mean(), 1) if not valid_delays.empty else None
 
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 # TOP METRICS
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 c1, c2, c3, c4 = st.columns(4)
 c1.metric("Airports", len(df_airports))
 c2.metric("Flights", len(df_flights))
@@ -107,35 +83,112 @@ c4.metric("Avg Delay (min)", f"{avg_delay}" if avg_delay else "N/A")
 
 st.markdown("---")
 
-# ---------------------------------------------------------------------
+# --------------------------------------------------
 # FLIGHT FILTER
-# ---------------------------------------------------------------------
-with st.expander("Search / Filter Flights"):
+# --------------------------------------------------
+with st.expander("🔍 Search / Filter Flights"):
     f1, f2, f3, f4 = st.columns([2,2,2,1])
-    fn = f1.text_input("Flight Number")
-    al = f2.text_input("Airline Code")
-    stt = f3.selectbox("Status", ["Any"] + sorted(dff["status"].dropna().unique()))
+    flight_no = f1.text_input("Flight Number")
+    airline = f2.text_input("Airline Code")
+    status = f3.selectbox("Status", ["Any"] + sorted(dff["status"].dropna().unique()))
     date_sel = f4.date_input("Date", value=None)
 
     ff = dff.copy()
-    if fn:
-        ff = ff[ff["flight_number"].str.contains(fn, case=False, na=False)]
-    if al:
-        ff = ff[ff["airline_code"].str.contains(al, case=False, na=False)]
-    if stt != "Any":
-        ff = ff[ff["status"] == stt]
+
+    if flight_no:
+        ff = ff[ff["flight_number"].str.contains(flight_no, case=False, na=False)]
+    if airline:
+        ff = ff[ff["airline_code"].str.contains(airline, case=False, na=False)]
+    if status != "Any":
+        ff = ff[ff["status"] == status]
     if date_sel:
         start = pd.to_datetime(date_sel).tz_localize("UTC")
         end = start + pd.Timedelta(days=1)
-        ff = ff[(ff["scheduled_departure"] >= start) & (ff["scheduled_departure"] < end)]
+        ff = ff[(ff["scheduled_departure"] >= start) &
+                (ff["scheduled_departure"] < end)]
 
     st.dataframe(ff.head(300), use_container_width=True)
 
 st.markdown("---")
 
-# ---------------------------------------------------------------------
+# --------------------------------------------------
+# AIRPORT DETAILS
+# --------------------------------------------------
+st.header("🏢 Airport Details")
+
+left, right = st.columns([2,3])
+with left:
+    airport_list = ["All"] + sorted(df_airports["iata_code"].dropna().unique())
+    sel_airport = st.selectbox("Select Airport (IATA)", airport_list)
+
+    if sel_airport != "All":
+        ap = df_airports[df_airports["iata_code"] == sel_airport].iloc[0]
+        st.write(f"**{ap['name']}**")
+        st.write(f"City: {ap['city']}, {ap['country']}")
+        st.write(f"Timezone: {ap['timezone']}")
+
+with right:
+    if sel_airport != "All":
+        arr = dff[dff["destination_iata"] == sel_airport]
+        dep = dff[dff["origin_iata"] == sel_airport]
+
+        st.subheader("Recent Arrivals")
+        st.dataframe(arr[["flight_number","origin_iata","actual_arrival","arrival_delay_min"]].head(10))
+
+        st.subheader("Recent Departures")
+        st.dataframe(dep[["flight_number","destination_iata","actual_departure"]].head(10))
+
+st.markdown("---")
+
+# --------------------------------------------------
+# DELAY ANALYSIS
+# --------------------------------------------------
+st.header("⏱ Delay Analysis")
+
+delay_by_airport = (
+    valid_delays.groupby("destination_iata")
+    .agg(avg_delay=("arrival_delay_min","mean"),
+         total_flights=("flight_id","count"))
+    .reset_index()
+    .sort_values("avg_delay", ascending=False)
+)
+
+if not delay_by_airport.empty:
+    fig = px.bar(
+        delay_by_airport.head(10),
+        x="destination_iata",
+        y="avg_delay",
+        labels={"destination_iata":"Airport", "avg_delay":"Avg Delay (min)"}
+    )
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(delay_by_airport.head(20), use_container_width=True)
+else:
+    st.info("No delay data available.")
+
+st.markdown("---")
+
+# --------------------------------------------------
+# ROUTE LEADERBOARDS
+# --------------------------------------------------
+st.header("🛣 Route Leaderboards")
+
+routes = (
+    dff.groupby(["origin_iata","destination_iata"])
+    .size()
+    .reset_index(name="flights")
+    .sort_values("flights", ascending=False)
+)
+
+st.subheader("Busiest Routes")
+st.dataframe(routes.head(20), use_container_width=True)
+
+st.markdown("---")
+
+# --------------------------------------------------
 # SQL QUERY EXPLORER (MENTOR REQUIREMENT)
-# ---------------------------------------------------------------------
+# --------------------------------------------------
+st.header("📌 SQL Query Explorer (Evaluation Section)")
+
 SQL_QUERIES = {
     "1. Flights per aircraft model": """
         SELECT a.model, COUNT(f.flight_id) AS cnt
@@ -151,15 +204,14 @@ SQL_QUERIES = {
         GROUP BY a.registration, a.model
         HAVING cnt > 5;
     """,
-    "3. Airports with more than 5 outbound flights": """
+    "3. Airports with >5 outbound flights": """
         SELECT ap.name, COUNT(f.flight_id) AS outbound_count
         FROM flights f
         JOIN airport ap ON ap.iata_code = f.origin_iata
         GROUP BY ap.name
-        HAVING outbound_count > 5
-        ORDER BY outbound_count DESC;
+        HAVING outbound_count > 5;
     """,
-    "4. Top 3 destination airports by arrivals": """
+    "4. Top 3 destination airports": """
         SELECT ap.name, ap.city, COUNT(f.flight_id) AS arrivals
         FROM flights f
         JOIN airport ap ON ap.iata_code = f.destination_iata
@@ -197,16 +249,17 @@ SQL_QUERIES = {
         FROM flights
         GROUP BY airline_code;
     """,
-    "9. Cancelled flights with route details": """
-        SELECT f.flight_number, f.aircraft_registration, o.name AS origin, d.name AS destination, f.scheduled_departure
+    "9. Cancelled flights details": """
+        SELECT f.flight_number, f.aircraft_registration,
+        o.name AS origin, d.name AS destination, f.scheduled_departure
         FROM flights f
         LEFT JOIN airport o ON o.iata_code = f.origin_iata
         LEFT JOIN airport d ON d.iata_code = f.destination_iata
-        WHERE f.status = 'Cancelled'
-        ORDER BY f.scheduled_departure DESC;
+        WHERE f.status = 'Cancelled';
     """,
-    "10. City routes with >2 aircraft models": """
-        SELECT o.city || '-' || d.city AS route, COUNT(DISTINCT a.model) AS models_count
+    "10. Routes with >2 aircraft models": """
+        SELECT o.city || '-' || d.city AS route,
+        COUNT(DISTINCT a.model) AS models_count
         FROM flights f
         JOIN airport o ON o.iata_code = f.origin_iata
         JOIN airport d ON d.iata_code = f.destination_iata
@@ -214,95 +267,20 @@ SQL_QUERIES = {
         GROUP BY o.city, d.city
         HAVING models_count > 2;
     """,
-    "11. Percentage of delayed arrivals per airport": """
+    "11. % delayed arrivals per airport": """
         SELECT ap.name, ap.iata_code,
-        SUM(CASE WHEN f.status = 'Delayed' THEN 1 ELSE 0 END) * 100.0 / COUNT(f.flight_id) AS pct_delayed
+        SUM(CASE WHEN f.status = 'Delayed' THEN 1 ELSE 0 END) * 100.0 / COUNT(*) AS pct_delayed
         FROM flights f
         JOIN airport ap ON ap.iata_code = f.destination_iata
-        GROUP BY ap.name, ap.iata_code
-        ORDER BY pct_delayed DESC;
+        GROUP BY ap.name, ap.iata_code;
     """
 }
 
-st.markdown("---")
-st.header("📌 SQL Query Explorer (Evaluation Section)")
-
-query_name = st.selectbox("Select a SQL query", list(SQL_QUERIES.keys()))
-st.code(SQL_QUERIES[query_name], language="sql")
+query = st.selectbox("Select a SQL Query", list(SQL_QUERIES.keys()))
+st.code(SQL_QUERIES[query], language="sql")
 
 with engine.connect() as conn:
-    try:
-        result = pd.read_sql(SQL_QUERIES[query_name], conn)
-        st.dataframe(result, use_container_width=True)
-    except Exception as e:
-        st.error("Query execution failed")
-        st.exception(e)
+    result = pd.read_sql(SQL_QUERIES[query], conn)
+    st.dataframe(result, use_container_width=True)
 
-st.markdown("---")
-st.caption("This section validates all analytical SQL queries used in the project.")
-
-
-# ---------------------------------------------------------------------
-# Airport Details
-# ---------------------------------------------------------------------
-st.header("Airport Details")
-left, right = st.columns([2,3])
-with left:
-    airport_choices = ["All"] + (sorted(df_airports['iata_code'].dropna().unique().tolist()) if not df_airports.empty else [])
-    sel_airport = st.selectbox("Select airport (IATA)", airport_choices)
-    if sel_airport != "All":
-        arow = df_airports[df_airports['iata_code'] == sel_airport]
-        if not arow.empty:
-            a = arow.iloc[0]
-            st.write(f"**{a.get('name','')}** — {a.get('city','')}, {a.get('country','')}")
-            st.write(f"Timezone: {a.get('timezone','N/A')}")
-            st.write(f"Coordinates: {a.get('latitude','')}, {a.get('longitude','')}")
-        else:
-            st.info("Airport metadata not found.")
-with right:
-    if sel_airport != "All":
-        arrivals = dff[dff['destination_iata'] == sel_airport].sort_values("actual_arrival", ascending=False)
-        departures = dff[dff['origin_iata'] == sel_airport].sort_values("actual_departure", ascending=False)
-        st.subheader("Recent Arrivals")
-        cols = [c for c in ["flight_number","aircraft_registration","origin_iata","scheduled_arrival","actual_arrival","status","arrival_delay_min"] if c in arrivals.columns]
-        st.dataframe(arrivals[cols].head(20))
-        st.subheader("Recent Departures")
-        cols2 = [c for c in ["flight_number","aircraft_registration","destination_iata","scheduled_departure","actual_departure","status","departure_delay_min"] if c in departures.columns]
-        st.dataframe(departures[cols2].head(20))
-
-st.markdown("---")
-
-# ---------------------------------------------------------------------
-# Delay Analysis
-# ---------------------------------------------------------------------
-st.header("Delay Analysis")
-if not per_airport.empty:
-    top_delays = per_airport.sort_values("avg_delay_min", ascending=False).head(15)
-    fig = px.bar(top_delays, x="destination_iata", y="avg_delay_min", labels={"destination_iata":"Airport","avg_delay_min":"Avg Delay (min)"})
-    st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(per_airport.sort_values("avg_delay_min", ascending=False).head(50))
-else:
-    st.info("No valid delay data available. Ensure flights have scheduled and actual arrival timestamps.")
-
-st.markdown("---")
-
-# ---------------------------------------------------------------------
-# Route leaderboards
-# ---------------------------------------------------------------------
-st.header("Route Leaderboards")
-if not dff.empty:
-    route_counts = dff.groupby(['origin_iata','destination_iata']).size().reset_index(name='count').sort_values("count", ascending=False).head(30)
-    st.subheader("Busiest routes")
-    st.dataframe(route_counts)
-
-    delayed = dff[dff['arrival_delay_min'] > 0].groupby('destination_iata').size().reset_index(name='delayed_count')
-    arrivals = dff.groupby('destination_iata').size().reset_index(name='total_arrivals')
-    merged = arrivals.merge(delayed, on='destination_iata', how='left').fillna(0)
-    merged['pct_delayed'] = (merged['delayed_count'] / merged['total_arrivals'] * 100).round(1)
-    st.subheader("Airports by % delayed arrivals")
-    st.dataframe(merged.sort_values('pct_delayed', ascending=False).head(20))
-else:
-    st.info("No flight data available. Use the demo generator or ingestion scripts.")
-
-st.markdown("---")
-st.caption("If numbers appear stale, run `streamlit cache clear` and restart the app. On Streamlit Cloud the DB is ephemeral; for persistence use a hosted DB.")
+st.caption("This section proves correctness of all SQL queries used in the project.")
