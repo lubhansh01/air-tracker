@@ -240,3 +240,69 @@ with engine.connect() as conn:
 
 st.markdown("---")
 st.caption("This section validates all analytical SQL queries used in the project.")
+
+
+# ---------------------------------------------------------------------
+# Airport Details
+# ---------------------------------------------------------------------
+st.header("Airport Details")
+left, right = st.columns([2,3])
+with left:
+    airport_choices = ["All"] + (sorted(df_airports['iata_code'].dropna().unique().tolist()) if not df_airports.empty else [])
+    sel_airport = st.selectbox("Select airport (IATA)", airport_choices)
+    if sel_airport != "All":
+        arow = df_airports[df_airports['iata_code'] == sel_airport]
+        if not arow.empty:
+            a = arow.iloc[0]
+            st.write(f"**{a.get('name','')}** — {a.get('city','')}, {a.get('country','')}")
+            st.write(f"Timezone: {a.get('timezone','N/A')}")
+            st.write(f"Coordinates: {a.get('latitude','')}, {a.get('longitude','')}")
+        else:
+            st.info("Airport metadata not found.")
+with right:
+    if sel_airport != "All":
+        arrivals = dff[dff['destination_iata'] == sel_airport].sort_values("actual_arrival", ascending=False)
+        departures = dff[dff['origin_iata'] == sel_airport].sort_values("actual_departure", ascending=False)
+        st.subheader("Recent Arrivals")
+        cols = [c for c in ["flight_number","aircraft_registration","origin_iata","scheduled_arrival","actual_arrival","status","arrival_delay_min"] if c in arrivals.columns]
+        st.dataframe(arrivals[cols].head(20))
+        st.subheader("Recent Departures")
+        cols2 = [c for c in ["flight_number","aircraft_registration","destination_iata","scheduled_departure","actual_departure","status","departure_delay_min"] if c in departures.columns]
+        st.dataframe(departures[cols2].head(20))
+
+st.markdown("---")
+
+# ---------------------------------------------------------------------
+# Delay Analysis
+# ---------------------------------------------------------------------
+st.header("Delay Analysis")
+if not per_airport.empty:
+    top_delays = per_airport.sort_values("avg_delay_min", ascending=False).head(15)
+    fig = px.bar(top_delays, x="destination_iata", y="avg_delay_min", labels={"destination_iata":"Airport","avg_delay_min":"Avg Delay (min)"})
+    st.plotly_chart(fig, use_container_width=True)
+    st.dataframe(per_airport.sort_values("avg_delay_min", ascending=False).head(50))
+else:
+    st.info("No valid delay data available. Ensure flights have scheduled and actual arrival timestamps.")
+
+st.markdown("---")
+
+# ---------------------------------------------------------------------
+# Route leaderboards
+# ---------------------------------------------------------------------
+st.header("Route Leaderboards")
+if not dff.empty:
+    route_counts = dff.groupby(['origin_iata','destination_iata']).size().reset_index(name='count').sort_values("count", ascending=False).head(30)
+    st.subheader("Busiest routes")
+    st.dataframe(route_counts)
+
+    delayed = dff[dff['arrival_delay_min'] > 0].groupby('destination_iata').size().reset_index(name='delayed_count')
+    arrivals = dff.groupby('destination_iata').size().reset_index(name='total_arrivals')
+    merged = arrivals.merge(delayed, on='destination_iata', how='left').fillna(0)
+    merged['pct_delayed'] = (merged['delayed_count'] / merged['total_arrivals'] * 100).round(1)
+    st.subheader("Airports by % delayed arrivals")
+    st.dataframe(merged.sort_values('pct_delayed', ascending=False).head(20))
+else:
+    st.info("No flight data available. Use the demo generator or ingestion scripts.")
+
+st.markdown("---")
+st.caption("If numbers appear stale, run `streamlit cache clear` and restart the app. On Streamlit Cloud the DB is ephemeral; for persistence use a hosted DB.")
