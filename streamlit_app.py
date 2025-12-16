@@ -470,8 +470,12 @@ with st.expander("Search / Filter Flights"):
         ff = ff[ff['status'] == status_sel]
     if date_from is not None and "scheduled_departure" in ff.columns:
         try:
-            date_from_dt = pd.to_datetime(date_from).tz_localize("UTC")
-            ff = ff[ff["scheduled_departure"] >= date_from_dt]
+            start_dt = pd.to_datetime(date_from).tz_localize("UTC")
+            end_dt = start_dt + pd.Timedelta(days=1)
+            ff = ff[
+            (ff["scheduled_departure"] >= start_dt) &
+            (ff["scheduled_departure"] < end_dt)
+        ]
         except Exception:
             pass
 
